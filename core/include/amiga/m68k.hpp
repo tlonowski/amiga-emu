@@ -117,6 +117,7 @@ private:
     uint32_t exec_group_c(uint16_t op);
     uint32_t exec_group_e(uint16_t op);
     uint32_t exec_bitfield(uint16_t op);
+    uint32_t exec_fpu(uint16_t op);
 
     uint32_t exec_bit_op(uint8_t bit_op, uint8_t bit_num, uint8_t ea_mode, uint8_t ea_reg, uint32_t extra_cycles);
     uint32_t exec_shift(uint8_t type, bool left, uint32_t val, uint32_t count, Size size);
@@ -133,6 +134,10 @@ private:
     uint32_t cacr_ = 0;
     uint32_t sfc_ = 0;
     uint32_t dfc_ = 0;
+    std::array<double, 8> fp_{};
+    uint32_t fpcr_ = 0;
+    uint32_t fpsr_ = 0;
+    uint32_t fpiar_ = 0;
     uint32_t pc_ = 0;
     uint32_t instr_pc_ = 0;
     uint16_t sr_ = 0x2700;

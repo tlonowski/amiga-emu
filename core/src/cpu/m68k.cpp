@@ -1,6 +1,8 @@
 #include "amiga/m68k.hpp"
 
+#include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <utility>
 
 namespace amiga {
@@ -77,6 +79,10 @@ void M68k::reset() {
     cacr_ = 0;
     sfc_ = 0;
     dfc_ = 0;
+    fp_.fill(0.0);
+    fpcr_ = 0;
+    fpsr_ = 0;
+    fpiar_ = 0;
     usp_ = 0;
     ssp_ = 0;
     sr_ = 0x2700;
@@ -517,6 +523,9 @@ uint32_t M68k::execute_opcode(uint16_t op) {
         case 0xD: return exec_group9_or_d(op, true);
         case 0xE: return exec_group_e(op);
         case 0xF:
+            if (is_020() && (op & 0x0E00u) == 0x0200u) {
+                return exec_fpu(op);
+            }
             raise_exception(11);
             return 34;
         default: break;
@@ -1750,6 +1759,491 @@ uint32_t M68k::exec_group_e(uint16_t op) {
     const uint32_t res = exec_shift(type, left, d_[reg], count, size);
     d_[reg] = (d_[reg] & ~size_mask(size)) | res;
     return ((size == Size::Long) ? 8u : 6u) + 2u * count;
+}
+
+namespace {
+
+double fpu_ext96_to_double(uint32_t hi, uint64_t mant) {
+    const bool neg = (hi & 0x80000000u) != 0;
+    const int exp = static_cast<int>((hi >> 16) & 0x7FFFu);
+    if (exp == 0 && mant == 0) return neg ? -0.0 : 0.0;
+    if (exp == 0x7FFF) {
+        if ((mant & 0x7FFFFFFFFFFFFFFFull) == 0) return neg ? -INFINITY : INFINITY;
+        return NAN;
+    }
+    const double val = std::ldexp(static_cast<double>(mant), exp - 16383 - 63);
+    return neg ? -val : val;
+}
+
+void fpu_double_to_ext96(double v, uint32_t& out_hi, uint64_t& out_mant) {
+    uint64_t bits = 0;
+    std::memcpy(&bits, &v, sizeof(bits));
+    const uint32_t sign = static_cast<uint32_t>((bits >> 63) & 1u) << 31;
+    if (std::isnan(v)) {
+        out_hi = sign | 0x7FFF0000u;
+        out_mant = 0xFFFFFFFFFFFFFFFFull;
+        return;
+    }
+    if (std::isinf(v)) {
+        out_hi = sign | 0x7FFF0000u;
+        out_mant = 0x8000000000000000ull;
+        return;
+    }
+    if (v == 0.0) {
+        out_hi = sign;
+        out_mant = 0;
+        return;
+    }
+    int exp2 = 0;
+    const double m = std::frexp(std::fabs(v), &exp2);  // m in [0.5, 1.0)
+    const int ext_exp = exp2 + 16382;
+    if (ext_exp <= 0) {
+        out_hi = sign;
+        out_mant = 0;
+        return;
+    }
+    if (ext_exp >= 0x7FFF) {
+        out_hi = sign | 0x7FFF0000u;
+        out_mant = 0x8000000000000000ull;
+        return;
+    }
+    out_hi = sign | (static_cast<uint32_t>(ext_exp) << 16);
+    out_mant = static_cast<uint64_t>(std::ldexp(m, 64));
+}
+
+bool fpu_test_cc(uint8_t cc, uint32_t fpsr) {
+    const bool n = (fpsr & (1u << 27)) != 0;
+    const bool z = (fpsr & (1u << 26)) != 0;
+    const bool nan = (fpsr & (1u << 24)) != 0;
+    switch (cc & 0x0Fu) {
+        case 0x00: return false;              // F
+        case 0x01: return z;                  // EQ
+        case 0x02: return !nan && !z && !n;   // OGT
+        case 0x03: return !nan && (z || !n);  // OGE
+        case 0x04: return !nan && !z && n;    // OLT
+        case 0x05: return !nan && (z || n);   // OLE
+        case 0x06: return !nan && !z;         // OGL
+        case 0x07: return !nan;               // OR
+        case 0x08: return nan;                // UN
+        case 0x09: return nan || z;           // UEQ
+        case 0x0A: return nan || (!z && !n);  // UGT
+        case 0x0B: return nan || z || !n;     // UGE
+        case 0x0C: return nan || (!z && n);   // ULT
+        case 0x0D: return nan || z || n;      // ULE
+        case 0x0E: return !z;                 // NE
+        case 0x0F: return true;               // T
+    }
+    return false;
+}
+
+}  // namespace
+
+uint32_t M68k::exec_fpu(uint16_t op) {
+    const uint8_t type = (op >> 6) & 0x7u;
+    const uint8_t ea_mode = (op >> 3) & 0x7u;
+    const uint8_t ea_reg = op & 0x7u;
+
+    auto update_fpcc = [&](double v) {
+        fpsr_ &= ~0x0F000000u;
+        if (std::isnan(v)) {
+            fpsr_ |= (1u << 24);
+        } else {
+            if (std::signbit(v)) fpsr_ |= (1u << 27);
+            if (v == 0.0) fpsr_ |= (1u << 26);
+            if (std::isinf(v)) fpsr_ |= (1u << 25);
+        }
+    };
+
+    if (type == 2) {  // FBcc.W (and FNOP when op==0xF280 && disp==0)
+        const int16_t disp = static_cast<int16_t>(fetch16());
+        const uint8_t cc = op & 0x3Fu;
+        if (fpu_test_cc(cc, fpsr_)) {
+            pc_ = static_cast<uint32_t>(static_cast<int32_t>(instr_pc_ + 2u) + disp);
+            return 16;
+        }
+        return 12;
+    }
+
+    if (type == 3) {  // FBcc.L
+        const int32_t disp = static_cast<int32_t>(fetch32());
+        const uint8_t cc = op & 0x3Fu;
+        if (fpu_test_cc(cc, fpsr_)) {
+            pc_ = static_cast<uint32_t>(static_cast<int32_t>(instr_pc_ + 2u) + disp);
+            return 16;
+        }
+        return 12;
+    }
+
+    if (type == 4) {  // FSAVE <ea> -> write 4-byte null state frame
+        if (ea_mode == 4) {
+            a_[ea_reg] -= 4u;
+            bus_.write32(a_[ea_reg], 0u);
+        } else {
+            const ResolvedEA ea = resolve_ea(ea_mode, ea_reg, Size::Long);
+            write_ea(ea, Size::Long, 0u);
+        }
+        return 16;
+    }
+
+    if (type == 5) {  // FRESTORE <ea>
+        uint32_t fmt = 0;
+        if (ea_mode == 3) {
+            fmt = bus_.read32(a_[ea_reg]);
+            a_[ea_reg] += 4u;
+        } else {
+            const ResolvedEA ea = resolve_ea(ea_mode, ea_reg, Size::Long);
+            fmt = read_ea(ea, Size::Long);
+        }
+        const uint32_t frame_bytes = (fmt >> 16) & 0xFFu;
+        if ((fmt & 0xFF000000u) == 0) {
+            fp_.fill(0.0);
+            fpsr_ = 0;
+        } else if (ea_mode == 3 && frame_bytes > 0) {
+            a_[ea_reg] += frame_bytes;
+        }
+        return 16;
+    }
+
+    if (type == 1) {  // FScc / FDBcc / FTRAPcc
+        const uint16_t ext = fetch16();
+        const bool cond = fpu_test_cc(static_cast<uint8_t>(ext & 0x3Fu), fpsr_);
+        if (ea_mode == 1) {  // FDBcc Dn, disp16
+            const int16_t disp = static_cast<int16_t>(fetch16());
+            if (!cond) {
+                const uint16_t cnt = static_cast<uint16_t>((d_[ea_reg] & 0xFFFFu) - 1u);
+                d_[ea_reg] = (d_[ea_reg] & 0xFFFF0000u) | cnt;
+                if (cnt != 0xFFFFu) {
+                    pc_ = static_cast<uint32_t>(static_cast<int32_t>(instr_pc_ + 4u) + disp);
+                }
+            }
+            return 14;
+        }
+        if (ea_mode == 7 && ea_reg >= 2) {  // FTRAPcc
+            if (ea_reg == 2) (void)fetch16();
+            else if (ea_reg == 3) (void)fetch32();
+            if (cond) raise_exception(7);
+            return 12;
+        }
+        const ResolvedEA ea = resolve_ea(ea_mode, ea_reg, Size::Byte);
+        write_ea(ea, Size::Byte, cond ? 0xFFu : 0x00u);
+        return 8 + ea.cycles;
+    }
+
+    if (type != 0) {
+        raise_exception(11);
+        return 34;
+    }
+
+    // type == 0: cpGEN
+    const uint16_t cmd = fetch16();
+    const uint8_t top = static_cast<uint8_t>((cmd >> 13) & 0x7u);
+
+    auto read_ext96_ea = [&](uint8_t mode, uint8_t reg) -> double {
+        uint32_t addr = 0;
+        if (mode == 3) {
+            addr = a_[reg];
+            a_[reg] += 12u;
+        } else if (mode == 4) {
+            a_[reg] -= 12u;
+            addr = a_[reg];
+        } else {
+            addr = resolve_ea(mode, reg, Size::Long).addr;
+        }
+        const uint32_t hi = bus_.read32(addr);
+        const uint64_t mant = (static_cast<uint64_t>(bus_.read32(addr + 4u)) << 32) |
+                              bus_.read32(addr + 8u);
+        return fpu_ext96_to_double(hi, mant);
+    };
+
+    auto write_ext96_ea = [&](uint8_t mode, uint8_t reg, double val) {
+        uint32_t addr = 0;
+        if (mode == 3) {
+            addr = a_[reg];
+            a_[reg] += 12u;
+        } else if (mode == 4) {
+            a_[reg] -= 12u;
+            addr = a_[reg];
+        } else {
+            addr = resolve_ea(mode, reg, Size::Long).addr;
+        }
+        uint32_t hi = 0;
+        uint64_t mant = 0;
+        fpu_double_to_ext96(val, hi, mant);
+        bus_.write32(addr, hi);
+        bus_.write32(addr + 4u, static_cast<uint32_t>(mant >> 32));
+        bus_.write32(addr + 8u, static_cast<uint32_t>(mant));
+    };
+
+    auto read_src_fmt = [&](uint8_t fmt) -> double {
+        switch (fmt) {
+            case 0: {  // Long
+                const ResolvedEA ea = resolve_ea(ea_mode, ea_reg, Size::Long);
+                return static_cast<double>(static_cast<int32_t>(read_ea(ea, Size::Long)));
+            }
+            case 1: {  // Single
+                const ResolvedEA ea = resolve_ea(ea_mode, ea_reg, Size::Long);
+                const uint32_t bits = read_ea(ea, Size::Long);
+                float f = 0.0f;
+                std::memcpy(&f, &bits, sizeof(f));
+                return static_cast<double>(f);
+            }
+            case 2:  // Extended (96-bit)
+                return read_ext96_ea(ea_mode, ea_reg);
+            case 4: {  // Word
+                const ResolvedEA ea = resolve_ea(ea_mode, ea_reg, Size::Word);
+                return static_cast<double>(static_cast<int16_t>(read_ea(ea, Size::Word)));
+            }
+            case 5: {  // Double (64-bit)
+                uint32_t addr = 0;
+                if (ea_mode == 3) { addr = a_[ea_reg]; a_[ea_reg] += 8u; }
+                else if (ea_mode == 4) { a_[ea_reg] -= 8u; addr = a_[ea_reg]; }
+                else addr = resolve_ea(ea_mode, ea_reg, Size::Long).addr;
+                const uint64_t bits = (static_cast<uint64_t>(bus_.read32(addr)) << 32) | bus_.read32(addr + 4u);
+                double d = 0.0;
+                std::memcpy(&d, &bits, sizeof(d));
+                return d;
+            }
+            case 6: {  // Byte
+                const ResolvedEA ea = resolve_ea(ea_mode, ea_reg, Size::Byte);
+                return static_cast<double>(static_cast<int8_t>(read_ea(ea, Size::Byte)));
+            }
+            default:
+                return 0.0;
+        }
+    };
+
+    // FMOVECR #rom_offset, FPn (cmd & 0xFC00 == 0x5C00)
+    if ((cmd & 0xFC00u) == 0x5C00u) {
+        const uint8_t dst = (cmd >> 7) & 0x7u;
+        const uint8_t rom_off = cmd & 0x7Fu;
+        double val = 0.0;
+        switch (rom_off) {
+            case 0x00: val = 3.14159265358979323846; break;
+            case 0x0B: val = 0.30102999566398119521; break;  // log10(2)
+            case 0x0C: val = 2.71828182845904523536; break;  // e
+            case 0x0D: val = 1.44269504088896340736; break;  // log2(e)
+            case 0x0E: val = 0.43429448190325182765; break;  // log10(e)
+            case 0x0F: val = 0.0; break;
+            case 0x30: val = 0.69314718055994530942; break;  // ln(2)
+            case 0x31: val = 2.30258509299404568402; break;  // ln(10)
+            case 0x32: val = 1.0; break;
+            case 0x33: val = 10.0; break;
+            case 0x34: val = 100.0; break;
+            case 0x35: val = 1e4; break;
+            case 0x36: val = 1e8; break;
+            case 0x37: val = 1e16; break;
+            case 0x38: val = 1e32; break;
+            case 0x39: val = 1e64; break;
+            case 0x3A: val = 1e128; break;
+            case 0x3B: val = 1e256; break;
+            default: val = 0.0; break;
+        }
+        fp_[dst] = val;
+        update_fpcc(val);
+        return 12;
+    }
+
+    // FMOVE FPn, <ea> (top == 3)
+    if (top == 3) {
+        const uint8_t src_fp = (cmd >> 7) & 0x7u;
+        const uint8_t fmt = (cmd >> 10) & 0x7u;
+        const double val = fp_[src_fp];
+        switch (fmt) {
+            case 0: {  // Long
+                const ResolvedEA ea = resolve_ea(ea_mode, ea_reg, Size::Long);
+                write_ea(ea, Size::Long, static_cast<uint32_t>(static_cast<int32_t>(std::llrint(val))));
+                break;
+            }
+            case 1: {  // Single
+                const float f = static_cast<float>(val);
+                uint32_t bits = 0;
+                std::memcpy(&bits, &f, sizeof(bits));
+                const ResolvedEA ea = resolve_ea(ea_mode, ea_reg, Size::Long);
+                write_ea(ea, Size::Long, bits);
+                break;
+            }
+            case 2:  // Extended
+                write_ext96_ea(ea_mode, ea_reg, val);
+                break;
+            case 4: {  // Word
+                const ResolvedEA ea = resolve_ea(ea_mode, ea_reg, Size::Word);
+                write_ea(ea, Size::Word, static_cast<uint16_t>(static_cast<int16_t>(std::llrint(val))));
+                break;
+            }
+            case 5: {  // Double
+                uint64_t bits = 0;
+                std::memcpy(&bits, &val, sizeof(bits));
+                uint32_t addr = 0;
+                if (ea_mode == 3) { addr = a_[ea_reg]; a_[ea_reg] += 8u; }
+                else if (ea_mode == 4) { a_[ea_reg] -= 8u; addr = a_[ea_reg]; }
+                else addr = resolve_ea(ea_mode, ea_reg, Size::Long).addr;
+                bus_.write32(addr, static_cast<uint32_t>(bits >> 32));
+                bus_.write32(addr + 4u, static_cast<uint32_t>(bits));
+                break;
+            }
+            case 6: {  // Byte
+                const ResolvedEA ea = resolve_ea(ea_mode, ea_reg, Size::Byte);
+                write_ea(ea, Size::Byte, static_cast<uint8_t>(static_cast<int8_t>(std::llrint(val))));
+                break;
+            }
+            default:
+                break;
+        }
+        return 16;
+    }
+
+    // FMOVE FPCR/FPSR/FPIAR <-> <ea> (top == 4 or 5)
+    if (top == 4 || top == 5) {
+        const bool to_mem = (top == 5);
+        const uint8_t regsel = (cmd >> 10) & 0x7u;
+        uint32_t* regs[3] = { &fpcr_, &fpsr_, &fpiar_ };
+        if (ea_mode == 0 || ea_mode == 1) {
+            const uint8_t idx = (regsel & 4u) ? 0 : ((regsel & 2u) ? 1 : 2);
+            uint32_t& gp = (ea_mode == 0) ? d_[ea_reg] : a_[ea_reg];
+            if (to_mem) gp = *regs[idx];
+            else *regs[idx] = gp;
+        } else {
+            uint32_t count = 0;
+            for (int b = 0; b < 3; ++b) if ((regsel & (4u >> b)) != 0) ++count;
+            uint32_t addr = 0;
+            if (ea_mode == 4) { a_[ea_reg] -= count * 4u; addr = a_[ea_reg]; }
+            else if (ea_mode == 3) { addr = a_[ea_reg]; a_[ea_reg] += count * 4u; }
+            else addr = resolve_ea(ea_mode, ea_reg, Size::Long).addr;
+            for (int b = 0; b < 3; ++b) {
+                if ((regsel & (4u >> b)) != 0) {
+                    if (to_mem) bus_.write32(addr, *regs[b]);
+                    else *regs[b] = bus_.read32(addr);
+                    addr += 4u;
+                }
+            }
+        }
+        return 16;
+    }
+
+    // FMOVEM.X (top == 6 or 7)
+    if (top == 6 || top == 7) {
+        const bool to_mem = (top == 7);
+        const uint8_t mode = (cmd >> 11) & 0x3u;
+        const bool predec = (mode == 2 || mode == 3);
+        const uint8_t mask = (mode == 1 || mode == 3)
+                                 ? static_cast<uint8_t>(d_[(cmd >> 4) & 0x7u] & 0xFFu)
+                                 : static_cast<uint8_t>(cmd & 0xFFu);
+        uint32_t count = 0;
+        for (int i = 0; i < 8; ++i) if ((mask & (1u << i)) != 0) ++count;
+        uint32_t addr = 0;
+        if (ea_mode == 4) {
+            addr = a_[ea_reg];
+        } else if (ea_mode == 3) {
+            addr = a_[ea_reg];
+            a_[ea_reg] += count * 12u;
+        } else {
+            addr = resolve_ea(ea_mode, ea_reg, Size::Long).addr;
+        }
+        if (predec && ea_mode == 4) {
+            for (int i = 0; i < 8; ++i) {
+                if ((mask & (1u << i)) != 0) {
+                    const int fp_idx = 7 - i;
+                    addr -= 12u;
+                    if (to_mem) {
+                        uint32_t hi = 0;
+                        uint64_t mant = 0;
+                        fpu_double_to_ext96(fp_[fp_idx], hi, mant);
+                        bus_.write32(addr, hi);
+                        bus_.write32(addr + 4u, static_cast<uint32_t>(mant >> 32));
+                        bus_.write32(addr + 8u, static_cast<uint32_t>(mant));
+                    } else {
+                        const uint32_t hi = bus_.read32(addr);
+                        const uint64_t mant = (static_cast<uint64_t>(bus_.read32(addr + 4u)) << 32) |
+                                              bus_.read32(addr + 8u);
+                        fp_[fp_idx] = fpu_ext96_to_double(hi, mant);
+                    }
+                }
+            }
+            a_[ea_reg] = addr;
+        } else {
+            for (int i = 0; i < 8; ++i) {
+                if ((mask & (1u << i)) != 0) {
+                    const int fp_idx = predec ? (7 - i) : i;
+                    if (to_mem) {
+                        uint32_t hi = 0;
+                        uint64_t mant = 0;
+                        fpu_double_to_ext96(fp_[fp_idx], hi, mant);
+                        bus_.write32(addr, hi);
+                        bus_.write32(addr + 4u, static_cast<uint32_t>(mant >> 32));
+                        bus_.write32(addr + 8u, static_cast<uint32_t>(mant));
+                    } else {
+                        const uint32_t hi = bus_.read32(addr);
+                        const uint64_t mant = (static_cast<uint64_t>(bus_.read32(addr + 4u)) << 32) |
+                                              bus_.read32(addr + 8u);
+                        fp_[fp_idx] = fpu_ext96_to_double(hi, mant);
+                    }
+                    addr += 12u;
+                }
+            }
+        }
+        return 16 + 8 * count;
+    }
+
+    // top == 0 (FPm -> FPn) or top == 2 (<ea> -> FPn)
+    const bool rm = (cmd & 0x4000u) != 0;
+    const uint8_t src_field = (cmd >> 10) & 0x7u;
+    const uint8_t dst_fp = (cmd >> 7) & 0x7u;
+    const uint8_t opmode = cmd & 0x7Fu;
+    const double src = rm ? read_src_fmt(src_field) : fp_[src_field];
+    double res = fp_[dst_fp];
+
+    switch (opmode) {
+        case 0x00: res = src; break;                              // FMOVE
+        case 0x01: res = std::rint(src); break;                   // FINT
+        case 0x02: res = std::sinh(src); break;                   // FSINH
+        case 0x03: res = std::trunc(src); break;                  // FINTRZ
+        case 0x04: res = std::sqrt(src); break;                   // FSQRT
+        case 0x06: res = std::log1p(src); break;                  // FLOGNP1
+        case 0x08: res = std::exp(src) - 1.0; break;              // FETOXM1
+        case 0x09: res = std::tanh(src); break;                   // FTANH
+        case 0x0A: res = std::atan(src); break;                   // FATAN
+        case 0x0C: res = std::asin(src); break;                   // FASIN
+        case 0x0D: res = std::atanh(src); break;                  // FATANH
+        case 0x0E: res = std::sin(src); break;                    // FSIN
+        case 0x0F: res = std::tan(src); break;                    // FTAN
+        case 0x10: res = std::exp(src); break;                    // FETOX
+        case 0x11: res = std::exp2(src); break;                   // FTWOTOX
+        case 0x12: res = std::pow(10.0, src); break;              // FTENTOX
+        case 0x14: res = std::log(src); break;                    // FLOGN
+        case 0x15: res = std::log10(src); break;                  // FLOG10
+        case 0x16: res = std::log2(src); break;                   // FLOG2
+        case 0x18: res = std::fabs(src); break;                   // FABS
+        case 0x19: res = std::cosh(src); break;                   // FCOSH
+        case 0x1A: res = -src; break;                             // FNEG
+        case 0x1C: res = std::acos(src); break;                   // FACOS
+        case 0x1D: res = std::cos(src); break;                    // FCOS
+        case 0x1E: { int e = 0; (void)std::frexp(src, &e); res = (src == 0.0) ? 0.0 : static_cast<double>(e - 1); break; }
+        case 0x1F: { int e = 0; res = std::frexp(src, &e) * 2.0; break; }
+        case 0x20: case 0x24: res = fp_[dst_fp] / src; break;     // FDIV / FSGLDIV
+        case 0x21: res = std::fmod(fp_[dst_fp], src); break;      // FMOD
+        case 0x22: res = fp_[dst_fp] + src; break;                // FADD
+        case 0x23: case 0x27: res = fp_[dst_fp] * src; break;     // FMUL / FSGLMUL
+        case 0x25: res = std::remainder(fp_[dst_fp], src); break; // FREM
+        case 0x26: res = std::ldexp(fp_[dst_fp], static_cast<int>(src)); break;  // FSCALE
+        case 0x28: res = fp_[dst_fp] - src; break;                // FSUB
+        case 0x30: case 0x31: case 0x32: case 0x33:
+        case 0x34: case 0x35: case 0x36: case 0x37:               // FSINCOS
+            fp_[opmode & 0x7u] = std::cos(src);
+            res = std::sin(src);
+            break;
+        case 0x38:                                                // FCMP
+            update_fpcc(fp_[dst_fp] - src);
+            return 16;
+        case 0x3A:                                                // FTST
+            update_fpcc(src);
+            return 12;
+        default:
+            break;
+    }
+
+    fp_[dst_fp] = res;
+    update_fpcc(res);
+    return 16;
 }
 
 }  // namespace amiga

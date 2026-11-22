@@ -472,7 +472,7 @@ void HardDriveController::build_rom() {
         se2.str("expansion.library");
 
         static constexpr uint16_t kNsdCmds[] = {
-            2, 3, 9, 10, 11, 13, 14, 15, 18, 20, 21, 22, 24, 25, 27,
+            2, 3, 4, 8, 9, 10, 11, 12, 13, 14, 15, 18, 20, 21, 22, 24, 25, 27,
             0x4000, 0xC000, 0xC001, 0xC002, 0
         };
         for (size_t i = 0; i < sizeof(kNsdCmds) / sizeof(kNsdCmds[0]); ++i) {
@@ -873,11 +873,16 @@ void HardDriveController::handle_begin_io(uint32_t io_addr, Bus& bus) {
             }
             break;
         }
+        case 4:   // CMD_UPDATE
+        case 8:   // CMD_FLUSH
         case 9:   // TD_MOTOR
         case 10:  // TD_SEEK
+        case 12:  // TD_CLEAR
         case 13:  // TD_CHANGENUM
         case 14:  // TD_CHANGESTATE (0 = disk present)
         case 15:  // TD_PROTSTATUS (0 = writable)
+            actual = 0;
+            break;
         case 20:  // TD_ADDCHANGEINT (keep pending; do not ReplyMsg)
             bus.write8(io_addr + 0x1Eu, bus.read8(io_addr + 0x1Eu) | 0x01u);
             actual = 0;
