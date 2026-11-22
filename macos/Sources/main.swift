@@ -161,7 +161,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTo
     private var profiles: [AmigaModelType: AmigaProfileConfig] = [
         .a500: AmigaProfileConfig(model: .a500),
         .a600: AmigaProfileConfig(model: .a600),
-        .a1200: AmigaProfileConfig(model: .a1200)
+        .a1200: AmigaProfileConfig(model: .a1200),
+        .a4000: AmigaProfileConfig(model: .a4000)
     ]
     private var activeModel: AmigaModelType = .a600
 

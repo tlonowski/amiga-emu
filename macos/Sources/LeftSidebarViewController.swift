@@ -208,10 +208,13 @@ final class LeftSidebarViewController: NSViewController, NSTableViewDataSource, 
         hardwareStack.addArrangedSubview(hdBtns)
 
         // 4. Fast RAM
-        hardwareStack.addArrangedSubview(makeSubTitle("Fast RAM"))
-        let ramSeg = NSSegmentedControl(labels: [L10n.t("Brak", "None"), "2 MB", "4 MB", "8 MB"], trackingMode: .selectOne, target: self, action: #selector(onFastRamChanged(_:)))
+        let isA4000 = (selectedModel == .a4000)
+        hardwareStack.addArrangedSubview(makeSubTitle(isA4000 ? "Fast RAM (Zorro III)" : "Fast RAM"))
+        let ramLabels = isA4000 ? [L10n.t("Brak", "None"), "16 MB", "64 MB", "128 MB"]
+                                : [L10n.t("Brak", "None"), "2 MB", "4 MB", "8 MB"]
+        let ramValues = isA4000 ? [0, 16, 64, 128] : [0, 2, 4, 8]
+        let ramSeg = NSSegmentedControl(labels: ramLabels, trackingMode: .selectOne, target: self, action: #selector(onFastRamChanged(_:)))
         ramSeg.controlSize = .small
-        let ramValues = [0, 2, 4, 8]
         ramSeg.selectedSegment = ramValues.firstIndex(of: profile.fastRamMB) ?? 0
         hardwareStack.addArrangedSubview(ramSeg)
     }
@@ -384,7 +387,7 @@ final class LeftSidebarViewController: NSViewController, NSTableViewDataSource, 
     }
 
     @objc private func onFastRamChanged(_ sender: NSSegmentedControl) {
-        let ramValues = [0, 2, 4, 8]
+        let ramValues = (selectedModel == .a4000) ? [0, 16, 64, 128] : [0, 2, 4, 8]
         let idx = sender.selectedSegment
         guard idx >= 0 && idx < ramValues.count, let p = profiles[selectedModel] else { return }
         delegate?.sidebarDidChangeFastRam(mb: ramValues[idx], for: p)

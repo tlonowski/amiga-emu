@@ -20,6 +20,7 @@ public:
     enum class CpuModel : uint8_t {
         M68000 = 0,
         M68EC020 = 1,
+        M68030 = 2,
     };
 
     /// Status register flag bit masks.
@@ -37,7 +38,8 @@ public:
 
     void set_cpu_model(CpuModel model) { cpu_model_ = model; }
     CpuModel cpu_model() const { return cpu_model_; }
-    bool is_020() const { return cpu_model_ == CpuModel::M68EC020; }
+    bool is_020() const { return cpu_model_ == CpuModel::M68EC020 || cpu_model_ == CpuModel::M68030; }
+    bool is_32bit() const { return cpu_model_ == CpuModel::M68030; }
 
     /// Performs a hardware reset: loads SSP from $000000 and PC from $000004.
     void reset();

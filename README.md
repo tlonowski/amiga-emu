@@ -7,8 +7,8 @@ Native Amiga emulator for macOS (Apple Silicon & Intel) written in **C++20** (`A
 ## Features
 
 - **CPU & Memory**
-  - Motorola **68000** (Amiga 500 / 600) and **68EC020** + **68881/68882 FPU** (Amiga 1200)
-  - Chip RAM (512 KB – 2 MB), Slow RAM, and **Fast RAM** (0 / 2 / 4 / 8 MB, 24-bit AutoConfig)
+  - Motorola **68000** (Amiga 500 / 600), **68EC020** (Amiga 1200), and **68030 + 68882 FPU** (Amiga 4000)
+  - Chip RAM (512 KB – 2 MB), Slow RAM, 24-bit AutoConfig Fast RAM (0 / 2 / 4 / 8 MB), and **32-bit Zorro III Fast RAM** (0 / 16 / 64 / 128 MB)
   - Kickstart ROM loader (1.3, 2.05, 3.1) with automatic OVL boot mapping
 
 - **Chipset (OCS / ECS / AGA)**
@@ -19,7 +19,7 @@ Native Amiga emulator for macOS (Apple Silicon & Intel) written in **C++20** (`A
 
 - **Native macOS UI**
   - **Metal** hardware-accelerated rendering with Sharp Bilinear filtering, 4:3 aspect-ratio preservation, borderless fullscreen (`Cmd+F`), and optional widescreen stretch (`Cmd+Shift+F`)
-  - Built-in machine profiles: **Amiga 500**, **Amiga 600**, and **Amiga 1200**
+  - Built-in machine profiles: **Amiga 500**, **Amiga 600**, **Amiga 1200**, and **Amiga 4000**
   - Folder-tree ADF disk browser (double-click to mount in `DF0:`)
   - Monokai dark theme and **English / Polish** UI localization
 
@@ -53,7 +53,7 @@ On first launch, AmigaEmu automatically creates the directory structure in your 
 
 Version numbers follow the `1.<machines>.<fixes>` convention (stored in [`VERSION`](VERSION)):
 - **`1`** — major release line
-- **`<machines>`** — number of supported Amiga machine profiles (currently **3**: Amiga 500, Amiga 600, Amiga 1200)
+- **`<machines>`** — number of supported Amiga machine profiles (currently **4**: Amiga 500, Amiga 600, Amiga 1200, Amiga 4000)
 - **`<fixes>`** — code fixes, compatibility improvements, and bugfix releases
 
 ## Author & License

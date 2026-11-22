@@ -18,8 +18,14 @@ Amiga500::Amiga500()
 void Amiga500::set_model(AmigaModel model) {
     model_ = model;
     bus_.set_model(model);
-    custom_.set_aga(model == AmigaModel::A1200);
-    cpu_.set_cpu_model(model == AmigaModel::A1200 ? M68k::CpuModel::M68EC020 : M68k::CpuModel::M68000);
+    custom_.set_aga(model == AmigaModel::A1200 || model == AmigaModel::A4000);
+    if (model == AmigaModel::A4000) {
+        cpu_.set_cpu_model(M68k::CpuModel::M68030);
+    } else if (model == AmigaModel::A1200) {
+        cpu_.set_cpu_model(M68k::CpuModel::M68EC020);
+    } else {
+        cpu_.set_cpu_model(M68k::CpuModel::M68000);
+    }
 }
 
 bool Amiga500::load_rom(const uint8_t* data, size_t size) {

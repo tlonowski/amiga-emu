@@ -753,11 +753,14 @@ uint32_t M68k::exec_group4(uint16_t op) {
             switch (ctrl) {
                 case 0x000: if (write) sfc_ = val & 0x7u; return {sfc_, true};
                 case 0x001: if (write) dfc_ = val & 0x7u; return {dfc_, true};
-                case 0x002: if (write) cacr_ = val & 0x0003u; return {cacr_, true};
+                case 0x002: if (write) cacr_ = val & (is_32bit() ? 0x3F1Fu : 0x0003u); return {cacr_, true};
                 case 0x800: if (write) usp_ = val; return {usp_, true};
                 case 0x801: if (write) vbr_ = val; return {vbr_, true};
                 case 0x802: return {0, true};  // CAAR (stub)
                 case 0x803: case 0x804: return {a_[7], true};  // MSP/ISP
+                case 0x003: case 0x004: case 0x005: case 0x006: case 0x007:
+                case 0x805: case 0x806: case 0x807:
+                    return {0, is_32bit()};  // 68030/040 MMU stubs
                 default: return {0, false};
             }
         };

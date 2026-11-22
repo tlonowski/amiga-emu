@@ -21,7 +21,8 @@ void amiga_destroy(AmigaMachine* machine) {
 
 void amiga_set_model(AmigaMachine* machine, int model) {
     if (!machine) return;
-    if (model == 2) machine->a500.set_model(amiga::AmigaModel::A1200);
+    if (model == 3) machine->a500.set_model(amiga::AmigaModel::A4000);
+    else if (model == 2) machine->a500.set_model(amiga::AmigaModel::A1200);
     else if (model == 1) machine->a500.set_model(amiga::AmigaModel::A600);
     else machine->a500.set_model(amiga::AmigaModel::A500);
 }

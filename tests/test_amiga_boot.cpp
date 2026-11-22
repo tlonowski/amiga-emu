@@ -126,11 +126,33 @@ void test_zorro2_fast_ram_autoconfig() {
     EXPECT_EQ(a1200.bus().read32(0x9FFFFCu), 0x12345678u);
 }
 
+void test_a4000_zorro3_fast_ram() {
+    amiga::Amiga500 a4000;
+    a4000.set_model(amiga::AmigaModel::A4000);
+    a4000.set_fast_ram_mb(64);
+    a4000.reset();
+
+    // AutoConfig er_Type for 64 MB Zorro III MEMLIST = 0xA3 (0x80 Z3 | 0x20 MEMLIST | size 3).
+    EXPECT_EQ(a4000.bus().read8(0xFF000000u), 0xA0u);
+    EXPECT_EQ(a4000.bus().read8(0xFF000100u), 0x30u);
+
+    // Configure Zorro III board at $40000000.
+    a4000.bus().write16(0xFF000044u, 0x4000u);
+    a4000.bus().write32(0x40000000u, 0xDEADBEEFu);
+    a4000.bus().write32(0x43FFFFFCu, 0xCAFEBABEu);
+    EXPECT_EQ(a4000.bus().read32(0x40000000u), 0xDEADBEEFu);
+    EXPECT_EQ(a4000.bus().read32(0x43FFFFFCu), 0xCAFEBABEu);
+
+    // Verify 32-bit ROM range does not mirror onto $40F80000.
+    EXPECT_EQ(a4000.bus().read32(0x40F80000u), 0x00000000u);
+}
+
 }  // namespace
 
 int main() {
     test_ovl_boot_and_cia_irq();
     test_zorro2_fast_ram_autoconfig();
+    test_a4000_zorro3_fast_ram();
 
     if (g_failures == 0) {
         std::printf("All Amiga boot tests passed.\n");

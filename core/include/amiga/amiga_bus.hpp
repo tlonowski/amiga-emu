@@ -47,7 +47,11 @@ private:
     bool fast_ram_autoconfig_active() const {
         return !fast_ram_.empty() && !fast_ram_configured_ && !fast_ram_shut_up_;
     }
+    bool is_zorro3_fast_ram() const {
+        return model_ == AmigaModel::A4000 && fast_ram_mb() >= 16u;
+    }
     uint8_t read_fast_autoconfig8(uint32_t offset) const;
+    uint8_t read_z3_autoconfig8(uint32_t offset) const;
 
     Cia8520& cia_a_;
     Cia8520& cia_b_;
@@ -66,6 +70,7 @@ private:
     uint8_t gayle_intreq_ = 0;
     uint8_t gayle_intena_ = 0;
     uint8_t gayle_cfg_ = 0;
+    uint8_t ramsey_ctrl_ = 0x08u;
 };
 
 }  // namespace amiga

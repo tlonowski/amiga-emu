@@ -16,8 +16,12 @@ AmigaBus::AmigaBus(Cia8520& cia_a, Cia8520& cia_b, CustomChips& custom)
 
 void AmigaBus::set_model(AmigaModel model) {
     model_ = model;
-    const size_t chip_sz = (model == AmigaModel::A1200) ? A1200_CHIP_RAM_SIZE : CHIP_RAM_SIZE;
-    const size_t slow_sz = (model == AmigaModel::A1200) ? 0u : SLOW_RAM_SIZE;
+    const size_t chip_sz = (model == AmigaModel::A1200 || model == AmigaModel::A4000)
+                               ? A1200_CHIP_RAM_SIZE
+                               : CHIP_RAM_SIZE;
+    const size_t slow_sz = (model == AmigaModel::A1200 || model == AmigaModel::A4000)
+                               ? 0u
+                               : SLOW_RAM_SIZE;
     chip_ram_.assign(chip_sz, 0);
     slow_ram_.assign(slow_sz, 0);
     custom_.set_chip_ram(chip_ram_.data(), chip_ram_.size());
@@ -25,13 +29,24 @@ void AmigaBus::set_model(AmigaModel model) {
     gayle_intreq_ = 0;
     gayle_intena_ = 0;
     gayle_cfg_ = 0;
+    ramsey_ctrl_ = 0x08u;
 }
 
 void AmigaBus::set_fast_ram_mb(uint32_t mb) {
     uint32_t clamped = 0;
-    if (mb >= 8u) clamped = 8u;
-    else if (mb >= 4u) clamped = 4u;
-    else if (mb >= 2u) clamped = 2u;
+    if (model_ == AmigaModel::A4000) {
+        if (mb >= 128u) clamped = 128u;
+        else if (mb >= 64u) clamped = 64u;
+        else if (mb >= 32u) clamped = 32u;
+        else if (mb >= 16u) clamped = 16u;
+        else if (mb >= 8u) clamped = 8u;
+        else if (mb >= 4u) clamped = 4u;
+        else if (mb >= 2u) clamped = 2u;
+    } else {
+        if (mb >= 8u) clamped = 8u;
+        else if (mb >= 4u) clamped = 4u;
+        else if (mb >= 2u) clamped = 2u;
+    }
     fast_ram_.assign(static_cast<size_t>(clamped) * 1024u * 1024u, 0);
     fast_ram_base_ = 0;
     fast_ram_configured_ = false;
@@ -49,6 +64,7 @@ void AmigaBus::reset() {
     gayle_intreq_ = 0;
     gayle_intena_ = 0;
     gayle_cfg_ = 0;
+    ramsey_ctrl_ = 0x08u;
 }
 
 void AmigaBus::reset_peripherals() {
@@ -65,6 +81,7 @@ void AmigaBus::reset_peripherals() {
     gayle_intreq_ = 0;
     gayle_intena_ = 0;
     gayle_cfg_ = 0;
+    ramsey_ctrl_ = 0x08u;
 }
 
 uint8_t AmigaBus::read_fast_autoconfig8(uint32_t offset) const {
@@ -90,6 +107,35 @@ uint8_t AmigaBus::read_fast_autoconfig8(uint32_t offset) const {
     return static_cast<uint8_t>((~nibble) & 0xF0u);
 }
 
+uint8_t AmigaBus::read_z3_autoconfig8(uint32_t offset) const {
+    // Zorro III AutoConfig at $FF000000:
+    // Hi nibble at offset + $00, Lo nibble at offset + $100 (for reg = 0x00, 0x04, 0x08, ...)
+    const uint32_t mb = fast_ram_mb();
+    uint8_t size_code = 1u;  // 16 MB (with ERTF_EXTENDED)
+    if (mb >= 128u) size_code = 4u;
+    else if (mb >= 64u) size_code = 3u;
+    else if (mb >= 32u) size_code = 2u;
+
+    const uint8_t er_type = static_cast<uint8_t>(0xA0u | size_code);  // ERT_ZORROIII (0x80) | ERTF_MEMLIST (0x20)
+    const uint8_t reg = static_cast<uint8_t>(offset & 0xFFu);
+    const bool is_low = (offset & 0x100u) != 0;
+
+    uint8_t val = 0x00u;
+    switch (reg) {
+        case 0x00: return is_low ? static_cast<uint8_t>((er_type & 0x0Fu) << 4)
+                                 : static_cast<uint8_t>(er_type & 0xF0u);
+        case 0x04: val = 0x02u; break;  // er_Product
+        case 0x08: val = 0x30u; break;  // er_Flags: ERTF_EXTENDED (0x20) | ERTF_Z3_MEMSIZE (0x10)? Wait: Z3 MEMSPACE=0x20, EXTENDED=0x20? Let's use 0x30 (MEMSPACE | EXTENDED)
+        case 0x10: val = 0x07u; break;  // Manufacturer hi ($07DB)
+        case 0x14: val = 0xDBu; break;  // Manufacturer lo
+        case 0x24: val = 0x02u; break;  // Serial #2
+        default:   val = 0x00u; break;
+    }
+    const uint8_t nibble = is_low ? static_cast<uint8_t>((val & 0x0Fu) << 4)
+                                  : static_cast<uint8_t>(val & 0xF0u);
+    return static_cast<uint8_t>((~nibble) & 0xF0u);
+}
+
 bool AmigaBus::load_rom(const uint8_t* data, size_t size) {
     if (!data || (size != 256 * 1024 && size != 512 * 1024)) {
         return false;
@@ -109,7 +155,7 @@ uint8_t AmigaBus::read_rom8(uint32_t offset) const {
 }
 
 uint8_t AmigaBus::read8(uint32_t addr) {
-    const uint32_t a = addr & 0x00FFFFFFu;
+    const uint32_t a = (model_ == AmigaModel::A4000) ? addr : (addr & 0x00FFFFFFu);
 
     if (a < chip_ram_.size()) {
         if (ovl_active() && a < MAX_ROM_SIZE) {
@@ -126,8 +172,8 @@ uint8_t AmigaBus::read8(uint32_t addr) {
         return slow_ram_[a - 0xC00000u];
     }
 
-    if (a >= 0xF80000u) {
-        return read_rom8(a - 0xF80000u);
+    if (a >= 0x00F80000u && a <= 0x00FFFFFFu) {
+        return read_rom8(a - 0x00F80000u);
     }
 
     if (a >= 0xBFE000u && a < 0xBFF000u) {
@@ -143,15 +189,23 @@ uint8_t AmigaBus::read8(uint32_t addr) {
         return static_cast<uint8_t>((a & 1u) ? (w & 0xFFu) : (w >> 8));
     }
 
-    if (fast_ram_autoconfig_active() && a >= 0xE80000u && a < 0xE90000u) {
+    if (fast_ram_autoconfig_active() && !is_zorro3_fast_ram() && a >= 0xE80000u && a < 0xE90000u) {
         return read_fast_autoconfig8(a - 0xE80000u);
+    }
+
+    if (fast_ram_autoconfig_active() && is_zorro3_fast_ram() && a >= 0xFF000000u && a < 0xFF010000u) {
+        return read_z3_autoconfig8(a - 0xFF000000u);
     }
 
     if (hd_ && hd_->handles_read(a)) {
         return hd_->read8(a);
     }
 
-    if (model_ == AmigaModel::A1200 || model_ == AmigaModel::A600) {
+    if (model_ == AmigaModel::A4000) {
+        if (a == 0x00DE0003u) return ramsey_ctrl_;
+        if (a == 0x00DE0043u) return 0x0Fu;  // Ramsey rev 7
+        if (a >= 0x00DD2000u && a < 0x00DD4000u) return 0xFF;  // A4000 IDE: no drive
+    } else if (model_ == AmigaModel::A1200 || model_ == AmigaModel::A600) {
         if (a >= 0xDE1000u && a < 0xDE2000u) {
             const uint8_t bit = static_cast<uint8_t>(((0xD0u << (gayle_id_shift_ & 7u)) & 0x80u) ? 0x80u : 0x00u);
             gayle_id_shift_ = static_cast<uint8_t>((gayle_id_shift_ + 1u) & 7u);
@@ -173,7 +227,7 @@ uint8_t AmigaBus::read8(uint32_t addr) {
 }
 
 uint16_t AmigaBus::read16(uint32_t addr) {
-    const uint32_t a = addr & 0x00FFFFFFu;
+    const uint32_t a = (model_ == AmigaModel::A4000) ? addr : (addr & 0x00FFFFFFu);
     if (a >= 0xDFF000u && a < 0xE00000u) {
         return custom_.read16(static_cast<uint16_t>(a & 0x1FEu));
     }
@@ -189,7 +243,7 @@ uint32_t AmigaBus::read32(uint32_t addr) {
 }
 
 void AmigaBus::write8(uint32_t addr, uint8_t val) {
-    const uint32_t a = addr & 0x00FFFFFFu;
+    const uint32_t a = (model_ == AmigaModel::A4000) ? addr : (addr & 0x00FFFFFFu);
 
     if (a < chip_ram_.size()) {
         chip_ram_[a] = val;
@@ -221,11 +275,24 @@ void AmigaBus::write8(uint32_t addr, uint8_t val) {
         return;
     }
 
-    if (fast_ram_autoconfig_active() && a >= 0xE80000u && a < 0xE90000u) {
+    if (fast_ram_autoconfig_active() && !is_zorro3_fast_ram() && a >= 0xE80000u && a < 0xE90000u) {
         const uint32_t off = a - 0xE80000u;
         if (off == 0x48u) {
             fast_ram_base_ = static_cast<uint32_t>(val) << 16;
             fast_ram_configured_ = true;
+        } else if (off == 0x4Cu) {
+            fast_ram_shut_up_ = true;
+        }
+        return;
+    }
+
+    if (fast_ram_autoconfig_active() && is_zorro3_fast_ram() && a >= 0xFF000000u && a < 0xFF010000u) {
+        const uint32_t off = a - 0xFF000000u;
+        if (off == 0x44u) {
+            fast_ram_base_ = (fast_ram_base_ & 0x00FF0000u) | (static_cast<uint32_t>(val) << 24);
+            fast_ram_configured_ = true;
+        } else if (off == 0x45u) {
+            fast_ram_base_ = (fast_ram_base_ & 0xFF000000u) | (static_cast<uint32_t>(val) << 16);
         } else if (off == 0x4Cu) {
             fast_ram_shut_up_ = true;
         }
@@ -237,7 +304,11 @@ void AmigaBus::write8(uint32_t addr, uint8_t val) {
         return;
     }
 
-    if (model_ == AmigaModel::A1200 || model_ == AmigaModel::A600) {
+    if (model_ == AmigaModel::A4000) {
+        if (a == 0x00DE0003u) {
+            ramsey_ctrl_ = val;
+        }
+    } else if (model_ == AmigaModel::A1200 || model_ == AmigaModel::A600) {
         if (a >= 0xDE1000u && a < 0xDE2000u) {
             gayle_id_shift_ = 0;
         } else if (a == 0xDA9000u) {
@@ -251,9 +322,14 @@ void AmigaBus::write8(uint32_t addr, uint8_t val) {
 }
 
 void AmigaBus::write16(uint32_t addr, uint16_t val) {
-    const uint32_t a = addr & 0x00FFFFFFu;
+    const uint32_t a = (model_ == AmigaModel::A4000) ? addr : (addr & 0x00FFFFFFu);
     if (a >= 0xDFF000u && a < 0xE00000u) {
         custom_.write16(static_cast<uint16_t>(a & 0x1FEu), val);
+        return;
+    }
+    if (fast_ram_autoconfig_active() && is_zorro3_fast_ram() && a == 0xFF000044u) {
+        fast_ram_base_ = static_cast<uint32_t>(val) << 16;
+        fast_ram_configured_ = true;
         return;
     }
     write8(a, static_cast<uint8_t>(val >> 8));
@@ -261,7 +337,7 @@ void AmigaBus::write16(uint32_t addr, uint16_t val) {
 }
 
 void AmigaBus::write32(uint32_t addr, uint32_t val) {
-    const uint32_t a = addr & 0x00FFFFFFu;
+    const uint32_t a = (model_ == AmigaModel::A4000) ? addr : (addr & 0x00FFFFFFu);
     if (hd_ && hd_->handles_write(a)) {
         hd_->write32(a, val, *this);
         return;

@@ -20,8 +20,12 @@ int main(int argc, char **argv) {
               path.c_str(), rom.size(), rom[0], rom[1], rom[2], rom[3]);
 
   amiga::Amiga500 a500;
-  if (path.find("a1200") != std::string::npos ||
-      path.find("A1200") != std::string::npos) {
+  if (path.find("a4000") != std::string::npos ||
+      path.find("A4000") != std::string::npos) {
+    a500.set_model(amiga::AmigaModel::A4000);
+    std::printf("Model: Amiga 4000 (AGA / 68030 + 68882 / 2MB Chip)\n");
+  } else if (path.find("a1200") != std::string::npos ||
+             path.find("A1200") != std::string::npos) {
     a500.set_model(amiga::AmigaModel::A1200);
     std::printf("Model: Amiga 1200 (AGA / 68EC020 / 2MB Chip)\n");
   }
@@ -33,7 +37,11 @@ int main(int argc, char **argv) {
     const std::string p = argv[ai];
     if (p == "--zorro") {
       a500.set_fast_ram_mb(8);
-      std::printf("Enabled Zorro II 8MB Fast RAM\n");
+      std::printf("Enabled 8MB Fast RAM\n");
+    } else if (p == "--fast" && ai + 1 < argc) {
+      const uint32_t mb = static_cast<uint32_t>(std::strtoul(argv[++ai], nullptr, 10));
+      a500.set_fast_ram_mb(mb);
+      std::printf("Enabled %uMB Fast RAM\n", mb);
     } else if (p.size() >= 4 && p.substr(p.size() - 4) == ".hdf") {
       a500.add_hdf(p);
       std::printf("Added HDF: %s\n", p.c_str());

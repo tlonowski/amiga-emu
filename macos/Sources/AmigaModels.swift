@@ -4,12 +4,14 @@ enum AmigaModelType: String, CaseIterable, Codable {
     case a500 = "Amiga 500"
     case a600 = "Amiga 600"
     case a1200 = "Amiga 1200"
+    case a4000 = "Amiga 4000"
 
     var subtitle: String {
         switch self {
         case .a500:  return "OCS • 68000 • 1 MB Chip"
         case .a600:  return "ECS • 68000 • 1 MB Chip"
         case .a1200: return "AGA • 68EC020 • 2 MB Chip"
+        case .a4000: return "AGA • 68030 + 68882 • 2 MB Chip"
         }
     }
 
@@ -18,6 +20,7 @@ enum AmigaModelType: String, CaseIterable, Codable {
         case .a500:  return 0
         case .a600:  return 1
         case .a1200: return 2
+        case .a4000: return 3
         }
     }
 
@@ -27,6 +30,7 @@ enum AmigaModelType: String, CaseIterable, Codable {
         case .a500:  return "\(base)/amiga-os-130.rom"
         case .a600:  return "\(base)/amiga-os-310-a600.rom"
         case .a1200: return "\(base)/amiga-os-310-a1200.rom"
+        case .a4000: return "\(base)/amiga-os-310-a4000.rom"
         }
     }
 }
@@ -75,7 +79,7 @@ final class AmigaProfileConfig {
         }
         self.floppies = [FloppyDriveSlot(unit: 0, diskPath: nil)]
         self.hardDrives = []
-        self.fastRamMB = 0
+        self.fastRamMB = (model == .a4000) ? 64 : 0
     }
 
     @discardableResult
@@ -148,7 +152,8 @@ enum ConfigStore {
         let result: [AmigaModelType: AmigaProfileConfig] = [
             .a500: AmigaProfileConfig(model: .a500),
             .a600: AmigaProfileConfig(model: .a600),
-            .a1200: AmigaProfileConfig(model: .a1200)
+            .a1200: AmigaProfileConfig(model: .a1200),
+            .a4000: AmigaProfileConfig(model: .a4000)
         ]
         var active: AmigaModelType = .a600
 
