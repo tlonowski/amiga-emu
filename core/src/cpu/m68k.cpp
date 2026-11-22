@@ -2121,10 +2121,11 @@ uint32_t M68k::exec_fpu(uint16_t op) {
     }
 
     // FMOVEM.X (top == 6 or 7)
+    // mode (bits 12..11): 0=static predec, 1=dynamic predec, 2=static postinc/ctrl, 3=dynamic postinc/ctrl
     if (top == 6 || top == 7) {
         const bool to_mem = (top == 7);
         const uint8_t mode = (cmd >> 11) & 0x3u;
-        const bool predec = (mode == 2 || mode == 3);
+        const bool predec = (mode == 0 || mode == 1);
         const uint8_t mask = (mode == 1 || mode == 3)
                                  ? static_cast<uint8_t>(d_[(cmd >> 4) & 0x7u] & 0xFFu)
                                  : static_cast<uint8_t>(cmd & 0xFFu);
@@ -2140,14 +2141,13 @@ uint32_t M68k::exec_fpu(uint16_t op) {
             addr = resolve_ea(ea_mode, ea_reg, Size::Long).addr;
         }
         if (predec && ea_mode == 4) {
-            for (int i = 0; i < 8; ++i) {
-                if ((mask & (1u << i)) != 0) {
-                    const int fp_idx = 7 - i;
+            for (int fp = 7; fp >= 0; --fp) {
+                if ((mask & (1u << fp)) != 0) {
                     addr -= 12u;
                     if (to_mem) {
                         uint32_t hi = 0;
                         uint64_t mant = 0;
-                        fpu_double_to_ext96(fp_[fp_idx], hi, mant);
+                        fpu_double_to_ext96(fp_[fp], hi, mant);
                         bus_.write32(addr, hi);
                         bus_.write32(addr + 4u, static_cast<uint32_t>(mant >> 32));
                         bus_.write32(addr + 8u, static_cast<uint32_t>(mant));
@@ -2155,19 +2155,18 @@ uint32_t M68k::exec_fpu(uint16_t op) {
                         const uint32_t hi = bus_.read32(addr);
                         const uint64_t mant = (static_cast<uint64_t>(bus_.read32(addr + 4u)) << 32) |
                                               bus_.read32(addr + 8u);
-                        fp_[fp_idx] = fpu_ext96_to_double(hi, mant);
+                        fp_[fp] = fpu_ext96_to_double(hi, mant);
                     }
                 }
             }
             a_[ea_reg] = addr;
         } else {
-            for (int i = 0; i < 8; ++i) {
-                if ((mask & (1u << i)) != 0) {
-                    const int fp_idx = predec ? (7 - i) : i;
+            for (int fp = 0; fp < 8; ++fp) {
+                if ((mask & (0x80u >> fp)) != 0) {
                     if (to_mem) {
                         uint32_t hi = 0;
                         uint64_t mant = 0;
-                        fpu_double_to_ext96(fp_[fp_idx], hi, mant);
+                        fpu_double_to_ext96(fp_[fp], hi, mant);
                         bus_.write32(addr, hi);
                         bus_.write32(addr + 4u, static_cast<uint32_t>(mant >> 32));
                         bus_.write32(addr + 8u, static_cast<uint32_t>(mant));
@@ -2175,7 +2174,7 @@ uint32_t M68k::exec_fpu(uint16_t op) {
                         const uint32_t hi = bus_.read32(addr);
                         const uint64_t mant = (static_cast<uint64_t>(bus_.read32(addr + 4u)) << 32) |
                                               bus_.read32(addr + 8u);
-                        fp_[fp_idx] = fpu_ext96_to_double(hi, mant);
+                        fp_[fp] = fpu_ext96_to_double(hi, mant);
                     }
                     addr += 12u;
                 }
