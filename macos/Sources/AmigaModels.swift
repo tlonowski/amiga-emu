@@ -4,33 +4,29 @@ enum AmigaModelType: String, CaseIterable, Codable {
     case a500 = "Amiga 500"
     case a600 = "Amiga 600"
     case a1200 = "Amiga 1200"
-    case a1200Zorro = "Amiga 1200 + Zorro"
 
     var subtitle: String {
         switch self {
-        case .a500:       return "OCS • 68000 • 1 MB Chip"
-        case .a600:       return "ECS • 68000 • 1 MB Chip"
-        case .a1200:      return "AGA • 68EC020 • 2 MB Chip"
-        case .a1200Zorro: return "AGA • 68EC020 • 2 MB + 8 MB Fast"
+        case .a500:  return "OCS • 68000 • 1 MB Chip"
+        case .a600:  return "ECS • 68000 • 1 MB Chip"
+        case .a1200: return "AGA • 68EC020 • 2 MB Chip"
         }
     }
 
     var modelCode: Int32 {
         switch self {
-        case .a500:       return 0
-        case .a600:       return 1
-        case .a1200:      return 2
-        case .a1200Zorro: return 2
+        case .a500:  return 0
+        case .a600:  return 1
+        case .a1200: return 2
         }
     }
 
     var defaultRomPath: String {
         let base = AmigaPaths.appRoot + "/Kickstart"
         switch self {
-        case .a500:       return "\(base)/amiga-os-130.rom"
-        case .a600:       return "\(base)/amiga-os-310-a600.rom"
-        case .a1200:      return "\(base)/amiga-os-310-a1200.rom"
-        case .a1200Zorro: return "\(base)/amiga-os-310-a1200.rom"
+        case .a500:  return "\(base)/amiga-os-130.rom"
+        case .a600:  return "\(base)/amiga-os-310-a600.rom"
+        case .a1200: return "\(base)/amiga-os-310-a1200.rom"
         }
     }
 }
@@ -79,7 +75,7 @@ final class AmigaProfileConfig {
         }
         self.floppies = [FloppyDriveSlot(unit: 0, diskPath: nil)]
         self.hardDrives = []
-        self.fastRamMB = (model == .a1200Zorro) ? 8 : 0
+        self.fastRamMB = 0
     }
 
     @discardableResult
@@ -152,8 +148,7 @@ enum ConfigStore {
         let result: [AmigaModelType: AmigaProfileConfig] = [
             .a500: AmigaProfileConfig(model: .a500),
             .a600: AmigaProfileConfig(model: .a600),
-            .a1200: AmigaProfileConfig(model: .a1200),
-            .a1200Zorro: AmigaProfileConfig(model: .a1200Zorro)
+            .a1200: AmigaProfileConfig(model: .a1200)
         ]
         var active: AmigaModelType = .a600
 

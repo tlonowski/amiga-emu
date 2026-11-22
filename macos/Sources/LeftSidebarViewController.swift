@@ -207,8 +207,8 @@ final class LeftSidebarViewController: NSViewController, NSTableViewDataSource, 
         hdBtns.addArrangedSubview(newHd)
         hardwareStack.addArrangedSubview(hdBtns)
 
-        // 4. Fast RAM (Zorro II)
-        hardwareStack.addArrangedSubview(makeSubTitle("Fast RAM (Zorro II)"))
+        // 4. Fast RAM
+        hardwareStack.addArrangedSubview(makeSubTitle("Fast RAM"))
         let ramSeg = NSSegmentedControl(labels: [L10n.t("Brak", "None"), "2 MB", "4 MB", "8 MB"], trackingMode: .selectOne, target: self, action: #selector(onFastRamChanged(_:)))
         ramSeg.controlSize = .small
         let ramValues = [0, 2, 4, 8]

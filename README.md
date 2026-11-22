@@ -7,19 +7,19 @@ Native Amiga emulator for macOS (Apple Silicon & Intel) written in **C++20** (`A
 ## Features
 
 - **CPU & Memory**
-  - Motorola **68000** (Amiga 500 / 600) and **68EC020** (Amiga 1200)
-  - Chip RAM (512 KB – 2 MB), Slow RAM, and **Zorro II AutoConfig Fast RAM** (0 / 2 / 4 / 8 MB)
+  - Motorola **68000** (Amiga 500 / 600) and **68EC020** + **68881/68882 FPU** (Amiga 1200)
+  - Chip RAM (512 KB – 2 MB), Slow RAM, and **Fast RAM** (0 / 2 / 4 / 8 MB, 24-bit AutoConfig)
   - Kickstart ROM loader (1.3, 2.05, 3.1) with automatic OVL boot mapping
 
 - **Chipset (OCS / ECS / AGA)**
   - **Custom chips (Agnus / Denise / Lisa / Paula)**: Copper, Blitter (desc, fill, line mode), hardware sprites (16/32/64-bit, attached 16-color, `BPLCON2` priority, `BPLCON4` sprite banks)
   - **Video modes**: Lores, Hires, Super-Hires (`SHRES`), Interlace (`LACE`) with flicker-free field merging, Dual Playfield (OCS/ECS/AGA), `HAM-6` & `HAM-8`, `EHB`, and 64-bit AGA bitplane fetch (`FMODE`)
   - **Audio**: 4-channel Paula DMA audio streamed via `AVFoundation`
-  - **Storage & I/O**: `DF0:`–`DF3:` floppy drives (`.adf`), RDB/OFS/FFS hard drive image support (`.hdf`), CIA-A / CIA-B timers, mouse, keyboard, and joystick emulation
+  - **Storage & I/O**: `DF0:`–`DF3:` floppy drives (`.adf`), RDB/OFS/FFS/SFS & Dynamic VHD hard drive image support (`.hdf`), CIA-A / CIA-B timers, mouse, keyboard, and joystick emulation
 
 - **Native macOS UI**
   - **Metal** hardware-accelerated rendering with Sharp Bilinear filtering, 4:3 aspect-ratio preservation, borderless fullscreen (`Cmd+F`), and optional widescreen stretch (`Cmd+Shift+F`)
-  - Built-in machine profiles: **Amiga 500**, **Amiga 600**, **Amiga 1200**, and **Amiga 1200 + Zorro**
+  - Built-in machine profiles: **Amiga 500**, **Amiga 600**, and **Amiga 1200**
   - Folder-tree ADF disk browser (double-click to mount in `DF0:`)
   - Monokai dark theme and **English / Polish** UI localization
 
