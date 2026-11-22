@@ -51,6 +51,22 @@ void AmigaBus::reset() {
     gayle_cfg_ = 0;
 }
 
+void AmigaBus::reset_peripherals() {
+    cia_a_.reset();
+    cia_b_.reset();
+    custom_.reset();
+    if (hd_) {
+        hd_->reset();
+    }
+    fast_ram_base_ = 0;
+    fast_ram_configured_ = false;
+    fast_ram_shut_up_ = false;
+    gayle_id_shift_ = 0;
+    gayle_intreq_ = 0;
+    gayle_intena_ = 0;
+    gayle_cfg_ = 0;
+}
+
 uint8_t AmigaBus::read_fast_autoconfig8(uint32_t offset) const {
     const uint32_t mb = fast_ram_mb();
     const uint8_t size_code = (mb == 8u) ? 0u : ((mb == 4u) ? 7u : 6u);

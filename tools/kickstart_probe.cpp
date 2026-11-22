@@ -29,26 +29,28 @@ int main(int argc, char **argv) {
     std::fprintf(stderr, "Unsupported ROM size: %zu\n", rom.size());
     return 1;
   }
-  if (argc > 2) {
-    const std::string p2 = argv[2];
-    if (p2.size() >= 4 && p2.substr(p2.size() - 4) == ".hdf") {
-      a500.add_hdf(p2);
-      std::printf("Added HDF: %s\n", p2.c_str());
-    } else if (a500.insert_adf(p2)) {
-      std::printf("Inserted ADF: %s\n", p2.c_str());
+  for (int ai = 2; ai < argc; ++ai) {
+    const std::string p = argv[ai];
+    if (p == "--zorro") {
+      a500.set_fast_ram_mb(8);
+      std::printf("Enabled Zorro II 8MB Fast RAM\n");
+    } else if (p.size() >= 4 && p.substr(p.size() - 4) == ".hdf") {
+      a500.add_hdf(p);
+      std::printf("Added HDF: %s\n", p.c_str());
+    } else if (ai == 2) {
+      if (a500.insert_adf(p)) {
+        std::printf("Inserted ADF: %s\n", p.c_str());
+      } else {
+        std::fprintf(stderr, "Failed to insert ADF: %s\n", p.c_str());
+      }
     } else {
-      std::fprintf(stderr, "Failed to insert ADF: %s\n", p2.c_str());
+      const int u = ai - 2;
+      if (u >= 1 && u <= 3) {
+        a500.set_floppy_enabled(u, true);
+        a500.insert_adf(u, p);
+        std::printf("Inserted DF%d: %s\n", u, p.c_str());
+      }
     }
-  }
-  if (argc > 3) {
-    a500.set_floppy_enabled(1, true);
-    a500.insert_adf(1, argv[3]);
-    std::printf("Inserted DF1: %s\n", argv[3]);
-  }
-  if (argc > 4) {
-    a500.set_floppy_enabled(2, true);
-    a500.insert_adf(2, argv[4]);
-    std::printf("Inserted DF2: %s\n", argv[4]);
   }
 
   a500.reset();

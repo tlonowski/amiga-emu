@@ -16,6 +16,9 @@ public:
     virtual void write8(uint32_t addr, uint8_t val) = 0;
     virtual void write16(uint32_t addr, uint16_t val) = 0;
     virtual void write32(uint32_t addr, uint32_t val) = 0;
+
+    /// Resets external peripherals and Autoconfig state on CPU RESET (0x4E70) without clearing RAM.
+    virtual void reset_peripherals() {}
 };
 
 }  // namespace amiga

@@ -772,6 +772,7 @@ uint32_t M68k::exec_group4(uint16_t op) {
             raise_exception(8);
             return 34;
         }
+        bus_.reset_peripherals();
         return 132;
     }
     if ((op & 0xFFF0u) == 0x4E40u) {  // TRAP #vector
@@ -810,8 +811,17 @@ uint32_t M68k::exec_group4(uint16_t op) {
     const uint8_t ea_mode = (op >> 3) & 0x7u;
     const uint8_t ea_reg = op & 0x7u;
 
-    // LEA <ea>, An
-    if ((op & 0x01C0u) == 0x01C0u) {
+    // EXTB.L Dn (68020) — must precede LEA since 0x49C0..0x49C7 matches (op & 0x01C0) == 0x01C0 with ea_mode == 0
+    if ((op & 0xFFF8u) == 0x49C0u && is_020()) {
+        const uint8_t reg = op & 0x7u;
+        d_[reg] = sign_extend_to_32(d_[reg] & 0xFFu, Size::Byte);
+        update_nz_flags(d_[reg], Size::Long);
+        return 4;
+    }
+
+    // LEA <ea>, An (control addressing modes only)
+    if ((op & 0x01C0u) == 0x01C0u &&
+        (ea_mode == 2 || ea_mode == 5 || ea_mode == 6 || (ea_mode == 7 && ea_reg <= 3))) {
         const uint8_t reg = (op >> 9) & 0x7u;
         const ResolvedEA ea = resolve_ea(ea_mode, ea_reg, Size::Long);
         a_[reg] = ea.addr;
@@ -996,14 +1006,6 @@ uint32_t M68k::exec_group4(uint16_t op) {
         const uint32_t res = exec_bcd_sub(0, dst);
         write_ea(ea, Size::Byte, res);
         return 6 + ea.cycles;
-    }
-
-    // EXTB.L Dn (68020)
-    if ((op & 0xFFF8u) == 0x49C0u && is_020()) {
-        const uint8_t reg = op & 0x7u;
-        d_[reg] = sign_extend_to_32(d_[reg] & 0xFFu, Size::Byte);
-        update_nz_flags(d_[reg], Size::Long);
-        return 4;
     }
 
     // EXT.W / EXT.L Dn

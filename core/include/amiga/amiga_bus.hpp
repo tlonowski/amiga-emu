@@ -27,6 +27,7 @@ public:
     void set_fast_ram_mb(uint32_t mb);
     uint32_t fast_ram_mb() const { return static_cast<uint32_t>(fast_ram_.size() / (1024u * 1024u)); }
     void reset();
+    void reset_peripherals() override;
     bool load_rom(const uint8_t* data, size_t size);
 
     uint8_t read8(uint32_t addr) override;
