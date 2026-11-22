@@ -38,7 +38,7 @@ make app
 open build/AmigaEmu.app
 ```
 
-On first launch, AmigaEmu automatically creates the directory structure in your home folder (`~/fs-uae/Kickstart`, `~/fs-uae/adf`, and `~/fs-uae/Hard Drives`), or you can select ROMs, `.adf`, and `.hdf` files directly in the UI.
+On first launch, AmigaEmu automatically creates the directory structure in your home folder (`~/AmigaEmu/Kickstart`, `~/AmigaEmu/adf`, and `~/AmigaEmu/Hard Drives`), or you can select ROMs, `.adf`, and `.hdf` files directly in the UI.
 
 ## Project Structure
 

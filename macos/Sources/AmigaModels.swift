@@ -25,7 +25,7 @@ enum AmigaModelType: String, CaseIterable, Codable {
     }
 
     var defaultRomPath: String {
-        let base = AmigaPaths.fsUaeRoot + "/Kickstart"
+        let base = AmigaPaths.appRoot + "/Kickstart"
         switch self {
         case .a500:       return "\(base)/amiga-os-130.rom"
         case .a600:       return "\(base)/amiga-os-310-a600.rom"
@@ -197,15 +197,15 @@ struct DiskImageItem {
 }
 
 enum AmigaPaths {
-    static let fsUaeRoot: String = {
-        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("fs-uae").path
+    static let appRoot: String = {
+        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("AmigaEmu").path
     }()
 
     static func ensureDirectoryStructure() {
         let fm = FileManager.default
         let subdirs = ["Kickstart", "adf", "Hard Drives"]
         for sub in subdirs {
-            let url = URL(fileURLWithPath: fsUaeRoot).appendingPathComponent(sub, isDirectory: true)
+            let url = URL(fileURLWithPath: appRoot).appendingPathComponent(sub, isDirectory: true)
             if !fm.fileExists(atPath: url.path) {
                 try? fm.createDirectory(at: url, withIntermediateDirectories: true)
             }
@@ -213,18 +213,18 @@ enum AmigaPaths {
     }
 
     static func preferredDirectory(subpath: String) -> URL {
-        let url = URL(fileURLWithPath: fsUaeRoot).appendingPathComponent(subpath, isDirectory: true)
+        let url = URL(fileURLWithPath: appRoot).appendingPathComponent(subpath, isDirectory: true)
         if FileManager.default.fileExists(atPath: url.path) {
             return url
         }
-        return URL(fileURLWithPath: fsUaeRoot, isDirectory: true)
+        return URL(fileURLWithPath: appRoot, isDirectory: true)
     }
 }
 
 enum DiskLibrary {
     static let rootPath: String = {
-        let adf = AmigaPaths.fsUaeRoot + "/adf"
-        return FileManager.default.fileExists(atPath: adf) ? adf : AmigaPaths.fsUaeRoot
+        let adf = AmigaPaths.appRoot + "/adf"
+        return FileManager.default.fileExists(atPath: adf) ? adf : AmigaPaths.appRoot
     }()
 
     static func scanImages() -> [DiskImageItem] {
