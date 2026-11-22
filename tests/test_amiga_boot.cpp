@@ -132,9 +132,9 @@ void test_a4000_zorro3_fast_ram() {
     a4000.set_fast_ram_mb(64);
     a4000.reset();
 
-    // AutoConfig er_Type for 64 MB Zorro III MEMLIST = 0xA3 (0x80 Z3 | 0x20 MEMLIST | size 3).
+    // AutoConfig er_Type for 64 MB Zorro III MEMLIST = 0xA2 (0x80 Z3 | 0x20 MEMLIST | size 2).
     EXPECT_EQ(a4000.bus().read8(0xFF000000u), 0xA0u);
-    EXPECT_EQ(a4000.bus().read8(0xFF000100u), 0x30u);
+    EXPECT_EQ(a4000.bus().read8(0xFF000100u), 0x20u);
 
     // Configure Zorro III board at $40000000.
     a4000.bus().write16(0xFF000044u, 0x4000u);

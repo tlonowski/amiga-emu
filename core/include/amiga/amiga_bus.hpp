@@ -47,6 +47,9 @@ private:
     bool fast_ram_autoconfig_active() const {
         return !fast_ram_.empty() && !fast_ram_configured_ && !fast_ram_shut_up_;
     }
+    bool fast_ram_mapped() const {
+        return fast_ram_configured_;
+    }
     bool is_zorro3_fast_ram() const {
         return model_ == AmigaModel::A4000 && fast_ram_mb() >= 16u;
     }
@@ -60,6 +63,7 @@ private:
 
     std::vector<uint8_t> chip_ram_;
     std::vector<uint8_t> slow_ram_;
+    std::vector<uint8_t> mb_fast_ram_;  // A4000 Motherboard Fast RAM ($07000000-$07FFFFFF, 16 MB)
     std::vector<uint8_t> fast_ram_;
     std::vector<uint8_t> rom_;
     uint32_t fast_ram_base_ = 0;
@@ -71,6 +75,7 @@ private:
     uint8_t gayle_intena_ = 0;
     uint8_t gayle_cfg_ = 0;
     uint8_t ramsey_ctrl_ = 0x08u;
+    uint8_t gary_coldstart_ = 0x80u;
 };
 
 }  // namespace amiga
