@@ -1,0 +1,4 @@
+module AmigaCore {
+    header "amiga/amiga_c_api.h"
+    export *
+}
