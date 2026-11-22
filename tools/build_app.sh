@@ -65,7 +65,9 @@ rm -rf "$ICONSET_DIR"
 cp "$ROOT_DIR/.build/release/AmigaEmu" "$MACOS_DIR/AmigaEmu"
 chmod +x "$MACOS_DIR/AmigaEmu"
 
-cat > "$CONTENTS_DIR/Info.plist" <<'EOF'
+APP_VERSION="$(tr -d '[:space:]' < "$ROOT_DIR/VERSION" 2>/dev/null || echo "1.0.0")"
+
+cat > "$CONTENTS_DIR/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -77,9 +79,9 @@ cat > "$CONTENTS_DIR/Info.plist" <<'EOF'
     <key>CFBundleIdentifier</key>
     <string>local.tomasz.amigaemu</string>
     <key>CFBundleVersion</key>
-    <string>1.0</string>
+    <string>${APP_VERSION}</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.0</string>
+    <string>${APP_VERSION}</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleExecutable</key>
