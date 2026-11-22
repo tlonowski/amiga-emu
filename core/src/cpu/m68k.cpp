@@ -1939,6 +1939,11 @@ uint32_t M68k::exec_fpu(uint16_t op) {
     const uint8_t top = static_cast<uint8_t>((cmd >> 13) & 0x7u);
 
     auto read_ext96_ea = [&](uint8_t mode, uint8_t reg) -> double {
+        if (mode == 7 && reg == 4) {
+            const uint32_t hi = fetch32();
+            const uint64_t mant = (static_cast<uint64_t>(fetch32()) << 32) | fetch32();
+            return fpu_ext96_to_double(hi, mant);
+        }
         uint32_t addr = 0;
         if (mode == 3) {
             addr = a_[reg];
@@ -1994,11 +1999,16 @@ uint32_t M68k::exec_fpu(uint16_t op) {
                 return static_cast<double>(static_cast<int16_t>(read_ea(ea, Size::Word)));
             }
             case 5: {  // Double (64-bit)
-                uint32_t addr = 0;
-                if (ea_mode == 3) { addr = a_[ea_reg]; a_[ea_reg] += 8u; }
-                else if (ea_mode == 4) { a_[ea_reg] -= 8u; addr = a_[ea_reg]; }
-                else addr = resolve_ea(ea_mode, ea_reg, Size::Long).addr;
-                const uint64_t bits = (static_cast<uint64_t>(bus_.read32(addr)) << 32) | bus_.read32(addr + 4u);
+                uint64_t bits = 0;
+                if (ea_mode == 7 && ea_reg == 4) {
+                    bits = (static_cast<uint64_t>(fetch32()) << 32) | fetch32();
+                } else {
+                    uint32_t addr = 0;
+                    if (ea_mode == 3) { addr = a_[ea_reg]; a_[ea_reg] += 8u; }
+                    else if (ea_mode == 4) { a_[ea_reg] -= 8u; addr = a_[ea_reg]; }
+                    else addr = resolve_ea(ea_mode, ea_reg, Size::Long).addr;
+                    bits = (static_cast<uint64_t>(bus_.read32(addr)) << 32) | bus_.read32(addr + 4u);
+                }
                 double d = 0.0;
                 std::memcpy(&d, &bits, sizeof(d));
                 return d;
