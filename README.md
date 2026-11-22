@@ -49,6 +49,13 @@ On first launch, AmigaEmu automatically creates the directory structure in your 
 - `tests/` — CPU (`test_m68k`) and Amiga boot/chipset (`test_amiga_boot`) tests
 - `tools/` — `build_app.sh` app bundler and `kickstart_probe` diagnostic tool
 
+## Versioning
+
+Version numbers follow the `1.<machines>.<fixes>` convention (stored in [`VERSION`](VERSION)):
+- **`1`** — major release line
+- **`<machines>`** — number of supported Amiga machine profiles (currently **3**: Amiga 500, Amiga 600, Amiga 1200)
+- **`<fixes>`** — code fixes, compatibility improvements, and bugfix releases
+
 ## Author & License
 
 Created by **Tomasz Lonowski**.
