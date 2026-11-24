@@ -6,6 +6,7 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <vector>
 
 namespace amiga {
 
@@ -25,6 +26,8 @@ public:
     void set_floppy(size_t unit, FloppyDrive* floppy) {
         if (unit < floppies_.size()) floppies_[unit] = floppy;
     }
+    void set_floppy_sound_enabled(bool enabled) { floppy_sound_enabled_ = enabled; }
+    bool floppy_sound_enabled() const { return floppy_sound_enabled_; }
     void set_joy1(bool up, bool down, bool left, bool right);
     void add_mouse_delta(int32_t dx, int32_t dy);
     void set_mouse_right(bool right);
@@ -38,6 +41,9 @@ public:
 
     /// Computes the current Paula interrupt priority level (0..6) for the 68000.
     uint8_t current_ipl() const;
+
+    /// Returns wait cycles (in 7.09 MHz bus clocks) for a CPU access to Chip RAM / Custom registers.
+    uint32_t cpu_chip_wait_cycles(bool is_32bit_access) const;
 
     uint16_t color(unsigned index) const { return colors_[index & 31u]; }
     uint16_t dmacon() const { return dmacon_; }
@@ -57,6 +63,14 @@ public:
     uint32_t blt_fill_count() const { return blt_fill_count_; }
     uint32_t blt_line_count() const { return blt_line_count_; }
 
+    // Paula Serial UART (SERDAT / SERPER / SERDATR)
+    uint16_t serper() const { return serper_; }
+    uint16_t serdat() const { return serdat_; }
+    const std::vector<uint8_t>& serial_tx_buffer() const { return serial_tx_buf_; }
+    size_t drain_serial_tx(uint8_t* dst, size_t max_len);
+    void clear_serial_tx() { serial_tx_buf_.clear(); }
+    void receive_serial_byte(uint8_t val);
+
     /// BGRA8 (0xAARRGGBB little-endian = B,G,R,A bytes) framebuffer of size FB_WIDTH * FB_HEIGHT.
     const uint32_t* framebuffer() const { return framebuffer_.data(); }
 
@@ -64,7 +78,12 @@ public:
     size_t read_audio(float* out_stereo, size_t max_frames);
 
     void set_led_filter(bool enabled) { led_filter_ = enabled; }
-    void set_aga(bool enabled) { aga_enabled_ = enabled; }
+    void set_ecs(bool enabled) { ecs_enabled_ = enabled; }
+    bool is_ecs() const { return ecs_enabled_; }
+    void set_aga(bool enabled) {
+        aga_enabled_ = enabled;
+        sync_palette_snapshot();
+    }
     bool is_aga() const { return aga_enabled_; }
 
 private:
@@ -90,8 +109,18 @@ private:
     void run_disk_line(bool& out_disk_index);
     void tick_audio(uint32_t cpu_cycles);
     void render_scanline(uint16_t line);
+    void apply_color_write(unsigned idx, unsigned bank, bool loct, uint16_t val);
+    void sync_palette_snapshot() {
+        colors_snap_ = colors_;
+        colors_aga_snap_ = colors_aga_;
+        color_events_.clear();
+        color_events_overflow_ = false;
+    }
     void run_blitter(uint16_t bltsize);
     void run_blitter_wh(uint16_t width, uint16_t height);
+    void step_blitter_once();
+    void tick_blitter(uint32_t cpu_cycles);
+    void flush_blitter();
 
     uint8_t* chip_ram_ = nullptr;
     size_t chip_ram_mask_ = 0;
@@ -125,6 +154,22 @@ private:
     bool lof_ = false;
     bool blt_zero_ = true;
     uint32_t blt_busy_cycles_ = 0;
+    bool blt_active_ = false;
+    bool blt_line_mode_ = false;
+    uint16_t blt_width_ = 0;
+    uint16_t blt_height_ = 0;
+    uint16_t blt_cur_x_ = 0;
+    uint16_t blt_cur_y_ = 0;
+    uint16_t blt_a_prev_ = 0;
+    uint16_t blt_b_prev_ = 0;
+    bool blt_fill_carry_ = false;
+    int16_t blt_line_err_ = 0;
+    uint16_t blt_line_bit_x_ = 0;
+    uint16_t blt_line_pat_bit_ = 0;
+    bool blt_line_first_ = true;
+    bool blt_line_sign_ = false;
+    uint32_t blt_cycles_per_step_ = 4;
+    uint32_t blt_cycle_acc_ = 0;
 
     // Copper state
     uint32_t cop1lc_ = 0;
@@ -152,6 +197,7 @@ private:
     uint16_t bplcon3_ = 0x0C00;
     uint16_t bplcon4_ = 0x0011;
     uint16_t fmode_ = 0;
+    bool ecs_enabled_ = false;
     bool aga_enabled_ = false;
     int16_t bpl1mod_ = 0;
     int16_t bpl2mod_ = 0;
@@ -185,11 +231,27 @@ private:
         uint16_t vstart = 0;
         uint16_t vstop = 0;
         uint16_t hstart = 0;  // in hires pixels (pos_x * 2 + ctl_bit0)
+        uint8_t hfine = 0;    // AGA SH1:SH0 (SPRxCTL bits 4:3), 70 ns / 35 ns sub-pixel offset
         bool attached = false;
         bool armed = false;
         bool done = false;
     };
     std::array<SpriteState, 8> sprites_{};
+
+    // Mid-scanline palette changes made by the Copper (applied lazily while rendering the line)
+    struct ColorEvent {
+        int32_t x;
+        uint16_t idx;
+        uint16_t bank;
+        bool loct;
+        uint16_t val;
+    };
+    std::vector<ColorEvent> color_events_;
+    std::array<uint16_t, 32> colors_snap_{};
+    std::array<uint32_t, 256> colors_aga_snap_{};
+    bool copper_writing_ = false;
+    bool color_events_overflow_ = false;
+    int32_t copper_write_x_ = 0;
 
     std::array<uint32_t, FB_WIDTH * FB_HEIGHT> framebuffer_{};
 
@@ -200,6 +262,7 @@ private:
     std::atomic<size_t> audio_write_pos_{0};
     std::atomic<size_t> audio_read_pos_{0};
     uint32_t audio_sample_acc_ = 0;
+    uint32_t audio_cck_rem_ = 0;
     float filter_l_ = 0.0f;
     float filter_r_ = 0.0f;
     bool led_filter_ = false;
@@ -210,6 +273,15 @@ private:
     float floppy_motor_env_ = 0.0f;
     float floppy_motor_phase_ = 0.0f;
     uint32_t floppy_noise_rng_ = 0x12345678u;
+    bool floppy_sound_enabled_ = true;
+
+    // Paula Serial UART state
+    uint16_t serper_ = 372u;  // 9600 bps default
+    uint16_t serdat_ = 0u;
+    uint8_t ser_rx_data_ = 0u;
+    bool ser_rx_ready_ = false;
+    uint32_t ser_tx_cycles_ = 0u;
+    std::vector<uint8_t> serial_tx_buf_;
 };
 
 }  // namespace amiga

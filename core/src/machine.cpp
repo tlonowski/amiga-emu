@@ -4,20 +4,23 @@ namespace amiga {
 
 Amiga500::Amiga500()
     : cia_a_(0x01u, 0xFDu),  // OVL high, buttons high, floppy bits dynamically updated
-      cia_b_(0xFFu, 0xFFu),
+      cia_b_(0xC4u, 0xC4u),  // Parallel printer ready (BUSY=0, POUT=0, SEL=1) + serial CTS/DSR/CD ready (0)
       bus_(cia_a_, cia_b_, custom_),
       cpu_(bus_) {
+    cia_a_.set_parallel_handshake(true);
     for (size_t i = 0; i < 4; ++i) {
         floppies_[i].set_select_mask(static_cast<uint8_t>(0x08u << i));
         floppies_[i].set_enabled(i == 0);
         custom_.set_floppy(i, &floppies_[i]);
     }
     bus_.set_hard_drive(&hd_);
+    bus_.set_gayle_ide(&gayle_ide_);
 }
 
 void Amiga500::set_model(AmigaModel model) {
     model_ = model;
     bus_.set_model(model);
+    custom_.set_ecs(model == AmigaModel::A600 || model == AmigaModel::A1200 || model == AmigaModel::A4000);
     custom_.set_aga(model == AmigaModel::A1200 || model == AmigaModel::A4000);
     if (model == AmigaModel::A4000) {
         cpu_.set_cpu_model(M68k::CpuModel::M68030);
@@ -30,6 +33,14 @@ void Amiga500::set_model(AmigaModel model) {
 
 bool Amiga500::load_rom(const uint8_t* data, size_t size) {
     return bus_.load_rom(data, size);
+}
+
+bool Amiga500::load_ext_rom(const uint8_t* data, size_t size) {
+    return bus_.load_ext_rom(data, size);
+}
+
+void Amiga500::clear_ext_rom() {
+    bus_.clear_ext_rom();
 }
 
 bool Amiga500::insert_adf(const std::string& path) {
@@ -78,6 +89,7 @@ void Amiga500::reset() {
         f.reset();
     }
     hd_.reset();
+    gayle_ide_.reset();
     bus_.reset();
     cpu_.reset();
     e_clock_rem_ = 0;
@@ -139,9 +151,12 @@ uint32_t Amiga500::step_instruction() {
 
     update_floppies();
     const uint32_t cpu_cycles = cpu_.step();
-    const uint32_t cycles = (model_ == AmigaModel::A1200)
-                                ? std::max<uint32_t>(1u, cpu_cycles / 2u)
-                                : cpu_cycles;
+    uint32_t cycles = cpu_cycles;
+    if (model_ == AmigaModel::A1200) {
+        cycles = std::max<uint32_t>(1u, cpu_cycles / 2u);
+    } else if (model_ == AmigaModel::A4000) {
+        cycles = std::max<uint32_t>(1u, cpu_cycles / 4u);
+    }
     update_floppies();
 
     if (key_cooldown_cycles_ > cycles) {
@@ -217,14 +232,22 @@ uint32_t Amiga500::led_state() const {
         state |= 0x08u;      // Bit 3: /LED filter active (bright)
     }
     uint8_t active_cyl = 0xFFu;
-    for (const auto& f : floppies_) {
-        if (f.motor_on()) {
+    uint32_t sel_motor_mask = 0u;
+    uint32_t any_motor_mask = 0u;
+    for (size_t i = 0; i < floppies_.size(); ++i) {
+        const auto& f = floppies_[i];
+        if (f.enabled() && f.motor_on()) {
             state |= 0x02u;  // Bit 1: Floppy LED
-            if (f.selected() || active_cyl == 0xFFu) {
+            any_motor_mask |= (0x10u << i);
+            if (f.selected()) {
+                sel_motor_mask |= (0x10u << i);
+                active_cyl = f.cylinder();
+            } else if (active_cyl == 0xFFu) {
                 active_cyl = f.cylinder();
             }
         }
     }
+    state |= (sel_motor_mask != 0u) ? sel_motor_mask : any_motor_mask;
     if (hd_.active()) {
         state |= 0x04u;      // Bit 2: HD LED
     }

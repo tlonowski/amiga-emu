@@ -32,8 +32,19 @@ void amiga_set_fast_ram_mb(AmigaMachine* machine, uint32_t mb) {
     machine->a500.set_fast_ram_mb(mb);
 }
 
+void amiga_set_a500_chip_ram_512k(AmigaMachine* machine, int enabled) {
+    if (!machine) return;
+    machine->a500.set_a500_chip_ram_512k(enabled != 0);
+}
+
+void amiga_set_a600_chip_ram_2mb(AmigaMachine* machine, int enabled) {
+    if (!machine) return;
+    machine->a500.set_a600_chip_ram_2mb(enabled != 0);
+}
+
 int amiga_load_rom(AmigaMachine* machine, const uint8_t* data, size_t size) {
     if (!machine) return 0;
+    machine->a500.clear_ext_rom();
     return machine->a500.load_rom(data, size) ? 1 : 0;
 }
 
@@ -43,7 +54,22 @@ int amiga_load_kickstart_path(AmigaMachine* machine, const char* path) {
     if (!amiga::load_kickstart_file(path, rom)) {
         return 0;
     }
-    return machine->a500.load_rom(rom.data(), rom.size()) ? 1 : 0;
+    machine->a500.clear_ext_rom();
+    if (!machine->a500.load_rom(rom.data(), rom.size())) {
+        return 0;
+    }
+    const std::string p(path);
+    std::string ext_path;
+    if (p.size() > 4 && p.substr(p.size() - 4) == ".rom") {
+        ext_path = p.substr(0, p.size() - 4) + "-ext.rom";
+    } else {
+        ext_path = p + "-ext.rom";
+    }
+    std::vector<uint8_t> ext_rom;
+    if (amiga::load_kickstart_file(ext_path, ext_rom)) {
+        machine->a500.load_ext_rom(ext_rom.data(), ext_rom.size());
+    }
+    return 1;
 }
 
 int amiga_insert_adf_path(AmigaMachine* machine, const char* path) {
@@ -77,6 +103,12 @@ void amiga_set_floppy_write_protect(AmigaMachine* machine, int unit, int read_on
     }
 }
 
+void amiga_set_floppy_sound_enabled(AmigaMachine* machine, int enabled) {
+    if (machine) {
+        machine->a500.custom().set_floppy_sound_enabled(enabled != 0);
+    }
+}
+
 void amiga_clear_hdfs(AmigaMachine* machine) {
     if (machine) {
         machine->a500.clear_hdfs();
@@ -86,6 +118,17 @@ void amiga_clear_hdfs(AmigaMachine* machine) {
 int amiga_add_hdf_path(AmigaMachine* machine, const char* path) {
     if (!machine || !path) return 0;
     return machine->a500.add_hdf(path) != static_cast<size_t>(-1) ? 1 : 0;
+}
+
+int amiga_attach_gayle_ide_path(AmigaMachine* machine, const char* path) {
+    if (!machine || !path) return 0;
+    return machine->a500.gayle_ide().attach_hdf(path) ? 1 : 0;
+}
+
+void amiga_detach_gayle_ide(AmigaMachine* machine) {
+    if (machine) {
+        machine->a500.gayle_ide().detach();
+    }
 }
 
 namespace {
@@ -278,4 +321,14 @@ void amiga_mouse_buttons(AmigaMachine* machine, int left, int right) {
     if (machine) {
         machine->a500.set_mouse_buttons(left != 0, right != 0);
     }
+}
+
+size_t amiga_read_parallel_output(AmigaMachine* machine, uint8_t* out_buf, size_t max_len) {
+    if (!machine) return 0;
+    return machine->a500.cia_a().drain_parallel_tx(out_buf, max_len);
+}
+
+size_t amiga_read_serial_output(AmigaMachine* machine, uint8_t* out_buf, size_t max_len) {
+    if (!machine) return 0;
+    return machine->a500.custom().drain_serial_tx(out_buf, max_len);
 }

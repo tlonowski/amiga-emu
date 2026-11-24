@@ -19,6 +19,12 @@ public:
 
     /// Resets external peripherals and Autoconfig state on CPU RESET (0x4E70) without clearing RAM.
     virtual void reset_peripherals() {}
+
+    /// Consumes accumulated bus wait cycles (in 7.09 MHz bus clocks) from DMA contention.
+    virtual uint32_t take_wait_cycles() { return 0; }
+
+    /// Returns true if the address is data-cacheable by the 68030 D-Cache (false when hardware /CIIN is asserted).
+    virtual bool is_data_cacheable(uint32_t /*addr*/) const { return true; }
 };
 
 }  // namespace amiga

@@ -16,7 +16,7 @@ void FloppyDrive::reset() {
     prev_prb_ = 0xFF;
     track_pos_ = 0;
     cached_track_ = 0xFF;
-    disk_changed_ = has_disk_;
+    disk_changed_ = false;
     pending_step_sound_ = false;
 }
 
@@ -28,7 +28,7 @@ bool FloppyDrive::insert_adf(const uint8_t* data, size_t size) {
     disk_path_.clear();
     write_buf_.clear();
     has_disk_ = true;
-    disk_changed_ = true;
+    disk_changed_ = false;
     cached_track_ = 0xFF;
     track_pos_ = 0;
     return true;
@@ -51,7 +51,7 @@ bool FloppyDrive::insert_adf_file(const std::string& path) {
 
 void FloppyDrive::eject() {
     has_disk_ = false;
-    disk_changed_ = false;
+    disk_changed_ = true;
     disk_path_.clear();
     write_buf_.clear();
     adf_data_.clear();
@@ -60,12 +60,6 @@ void FloppyDrive::eject() {
 }
 
 void FloppyDrive::write_cia_b_prb(uint8_t prb) {
-    if (!enabled_) {
-        selected_ = false;
-        prev_prb_ = prb;
-        return;
-    }
-
     const bool now_selected = (prb & sel_bit_mask_) == 0;  // /SELx
     const bool mtr_low = (prb & 0x80u) == 0;               // /MTR active low
 
@@ -82,6 +76,8 @@ void FloppyDrive::write_cia_b_prb(uint8_t prb) {
         if (mtr_low) {
             motor_on_ = true;
             id_mode_ = false;
+        } else {
+            motor_on_ = false;
         }
     }
     selected_ = now_selected;
@@ -97,22 +93,25 @@ void FloppyDrive::write_cia_b_prb(uint8_t prb) {
             } else {
                 if (cylinder_ < 79) ++cylinder_;
             }
-            if (has_disk_) {
+            if (enabled_ && has_disk_) {
                 disk_changed_ = false;  // Stepping clears /CHNG latch when disk is present
             }
-            pending_step_sound_ = true;
+            if (enabled_) {
+                pending_step_sound_ = true;
+            }
         }
     }
     prev_prb_ = prb;
 }
 
 uint8_t FloppyDrive::cia_a_status_bits() const {
-    if (!enabled_ || !selected_) {
+    if (!selected_) {
         return 0x3Cu;  // All active-low lines high (inactive)
     }
+    const bool disk_present = enabled_ && has_disk_;
     uint8_t bits = 0;
     // Bit 5: /RDY (0 = ready when disk inserted and motor on, OR 3.5" DD Drive ID = 0 in id_mode)
-    if (!id_mode_ && (!has_disk_ || !motor_on_)) {
+    if (!id_mode_ && (!disk_present || !motor_on_)) {
         bits |= 0x20u;
     }
     // Bit 4: /TK0 (0 = head on cylinder 0)
@@ -120,11 +119,11 @@ uint8_t FloppyDrive::cia_a_status_bits() const {
         bits |= 0x10u;
     }
     // Bit 3: /WPRO (0 = write protected, 1 = writable)
-    if (has_disk_ && !write_protected_) {
+    if (disk_present && !write_protected_) {
         bits |= 0x08u;
     }
     // Bit 2: /CHNG (0 = no disk or disk just changed, 1 = disk present & acknowledged)
-    if (has_disk_ && !disk_changed_) {
+    if (disk_present && !disk_changed_) {
         bits |= 0x04u;
     }
     return bits;

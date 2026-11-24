@@ -1,5 +1,8 @@
 #include "amiga/cia.hpp"
 
+#include <algorithm>
+#include <cstring>
+
 namespace amiga {
 
 Cia8520::Cia8520(uint8_t pra_reset, uint8_t pra_input_mask)
@@ -26,6 +29,7 @@ void Cia8520::reset() {
     icr_mask_ = 0;
     cra_ = 0;
     crb_ = 0;
+    ack_pending_e_clocks_ = 0;
 }
 
 uint8_t Cia8520::port_a() const {
@@ -80,7 +84,15 @@ uint8_t Cia8520::read(uint8_t reg) {
 void Cia8520::write(uint8_t reg, uint8_t val) {
     switch (reg & 0x0Fu) {
         case 0x0: pra_ = val; break;
-        case 0x1: prb_ = val; break;
+        case 0x1:
+            prb_ = val;
+            if (parallel_handshake_ && ddrb_ != 0u) {
+                if (prb_tx_buf_.size() < 1024u * 1024u) {
+                    prb_tx_buf_.push_back(port_b());
+                }
+                ack_pending_e_clocks_ = 4u;  // Pulse Centronics /ACK on CIA-A FLAG after ~5 us
+            }
+            break;
         case 0x2: ddra_ = val; break;
         case 0x3: ddrb_ = val; break;
         case 0x4: ta_latch_ = static_cast<uint16_t>((ta_latch_ & 0xFF00u) | val); break;
@@ -158,6 +170,15 @@ void Cia8520::write(uint8_t reg, uint8_t val) {
 void Cia8520::tick_e_clocks(uint32_t e_clocks) {
     if (e_clocks == 0) return;
 
+    if (ack_pending_e_clocks_ > 0u) {
+        if (e_clocks >= ack_pending_e_clocks_) {
+            ack_pending_e_clocks_ = 0u;
+            raise_icr(0x10u);  // FLAG interrupt (/ACK from Centronics printer)
+        } else {
+            ack_pending_e_clocks_ -= e_clocks;
+        }
+    }
+
     auto step_timer = [](uint16_t& counter, uint16_t latch, uint8_t& cr, uint32_t ticks) -> bool {
         if ((cr & 0x01u) == 0) return false;
         if (ticks < counter) {
@@ -185,6 +206,15 @@ void Cia8520::tick_tod() {
     if (tod_ == tod_alarm_) {
         raise_icr(0x04u);  // TOD Alarm interrupt
     }
+}
+
+size_t Cia8520::drain_parallel_tx(uint8_t* dst, size_t max_len) {
+    if (prb_tx_buf_.empty()) return 0;
+    if (!dst || max_len == 0) return prb_tx_buf_.size();
+    const size_t n = std::min(max_len, prb_tx_buf_.size());
+    std::memcpy(dst, prb_tx_buf_.data(), n);
+    prb_tx_buf_.erase(prb_tx_buf_.begin(), prb_tx_buf_.begin() + static_cast<std::ptrdiff_t>(n));
+    return n;
 }
 
 }  // namespace amiga

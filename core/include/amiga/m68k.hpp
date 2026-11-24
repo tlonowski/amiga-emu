@@ -119,12 +119,29 @@ private:
     uint32_t exec_group_c(uint16_t op);
     uint32_t exec_group_e(uint16_t op);
     uint32_t exec_bitfield(uint16_t op);
+    uint32_t exec_mmu(uint16_t op);
     uint32_t exec_fpu(uint16_t op);
 
     uint32_t exec_bit_op(uint8_t bit_op, uint8_t bit_num, uint8_t ea_mode, uint8_t ea_reg, uint32_t extra_cycles);
     uint32_t exec_shift(uint8_t type, bool left, uint32_t val, uint32_t count, Size size);
     uint32_t exec_bcd_add(uint8_t dst, uint8_t src);
     uint32_t exec_bcd_sub(uint8_t dst, uint8_t src);
+
+    void invalidate_icache();
+    void invalidate_icache_entry(uint32_t addr);
+    uint16_t icache_read16(uint32_t addr);
+    void invalidate_dcache();
+    void invalidate_dcache_entry(uint32_t addr);
+    uint32_t translate_mmu_addr(uint32_t logical_addr, bool is_write, bool& out_cache_inhibit, uint16_t* out_mmusr = nullptr, uint32_t* out_desc_addr = nullptr) const;
+    uint32_t dcache_read(uint32_t addr, Size s);
+    void dcache_write(uint32_t addr, Size s, uint32_t val);
+
+    struct ICacheEntry {
+        uint32_t tag = 0;
+        uint32_t data = 0;
+        bool valid = false;
+    };
+    static constexpr size_t ICACHE_ENTRIES = 64;  // 64 x 4 bytes = 256 bytes (68020/68EC020/68030)
 
     Bus& bus_;
     CpuModel cpu_model_ = CpuModel::M68000;
@@ -134,12 +151,25 @@ private:
     uint32_t ssp_ = 0;
     uint32_t vbr_ = 0;
     uint32_t cacr_ = 0;
+    uint32_t caar_ = 0;
     uint32_t sfc_ = 0;
     uint32_t dfc_ = 0;
+    // 68030 PMMU registers
+    uint32_t mmu_tc_ = 0;
+    uint64_t mmu_crp_ = 0;
+    uint64_t mmu_srp_ = 0;
+    uint32_t mmu_tt0_ = 0;
+    uint32_t mmu_tt1_ = 0;
+    uint16_t mmu_sr_ = 0;
+    std::array<ICacheEntry, ICACHE_ENTRIES> icache_{};
+    std::array<ICacheEntry, ICACHE_ENTRIES> dcache_{};
+    uint32_t icache_hits_in_step_ = 0;
+    uint32_t dcache_hits_in_step_ = 0;
     std::array<double, 8> fp_{};
     uint32_t fpcr_ = 0;
     uint32_t fpsr_ = 0;
     uint32_t fpiar_ = 0;
+    bool fpu_initialized_ = false;
     uint32_t pc_ = 0;
     uint32_t instr_pc_ = 0;
     uint16_t sr_ = 0x2700;

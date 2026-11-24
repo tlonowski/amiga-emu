@@ -1,6 +1,8 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
+#include <vector>
 
 namespace amiga {
 
@@ -37,11 +39,20 @@ public:
     uint32_t tod() const { return tod_; }
     uint32_t tod_alarm() const { return tod_alarm_; }
 
+    /// Enables Centronics parallel-port auto-/ACK on PRB writes (used by CIA-A).
+    void set_parallel_handshake(bool enabled) { parallel_handshake_ = enabled; }
+    const std::vector<uint8_t>& parallel_tx_buffer() const { return prb_tx_buf_; }
+    size_t drain_parallel_tx(uint8_t* dst, size_t max_len);
+    void clear_parallel_tx() { prb_tx_buf_.clear(); }
+
 private:
     void raise_icr(uint8_t bits);
 
     uint8_t pra_reset_ = 0;
     uint8_t pra_input_mask_ = 0;
+    bool parallel_handshake_ = false;
+    uint32_t ack_pending_e_clocks_ = 0;
+    std::vector<uint8_t> prb_tx_buf_;
 
     uint8_t pra_ = 0;
     uint8_t prb_ = 0;

@@ -27,10 +27,10 @@ enum AmigaModelType: String, CaseIterable, Codable {
     var defaultRomPath: String {
         let base = AmigaPaths.appRoot + "/Kickstart"
         switch self {
-        case .a500:  return "\(base)/amiga-os-130.rom"
-        case .a600:  return "\(base)/amiga-os-310-a600.rom"
-        case .a1200: return "\(base)/amiga-os-310-a1200.rom"
-        case .a4000: return "\(base)/amiga-os-310-a4000.rom"
+        case .a500:  return "\(base)/A500-KS1.3.rom"
+        case .a600:  return "\(base)/A600-KS3.1.rom"
+        case .a1200: return "\(base)/A1200-KS3.1.rom"
+        case .a4000: return "\(base)/A4000-KS3.1.rom"
         }
     }
 }
@@ -69,6 +69,8 @@ final class AmigaProfileConfig {
     var floppies: [FloppyDriveSlot]
     var hardDrives: [HardDriveSlot]
     var fastRamMB: Int
+    var a500Chip512KB: Bool
+    var a600Chip2MB: Bool
 
     init(model: AmigaModelType) {
         self.model = model
@@ -80,6 +82,8 @@ final class AmigaProfileConfig {
         self.floppies = [FloppyDriveSlot(unit: 0, diskPath: nil)]
         self.hardDrives = []
         self.fastRamMB = (model == .a4000) ? 64 : 0
+        self.a500Chip512KB = false
+        self.a600Chip2MB = false
     }
 
     @discardableResult
@@ -115,6 +119,8 @@ struct PersistedProfile: Codable {
     var floppies: [FloppyDriveSlot]
     var hardDrives: [HardDriveSlot]
     var fastRamMB: Int?
+    var a500Chip512KB: Bool?
+    var a600Chip2MB: Bool?
 }
 
 struct PersistedConfig: Codable {
@@ -136,7 +142,9 @@ enum ConfigStore {
                 romPath: cfg.romPath,
                 floppies: cfg.floppies,
                 hardDrives: cfg.hardDrives,
-                fastRamMB: cfg.fastRamMB
+                fastRamMB: cfg.fastRamMB,
+                a500Chip512KB: cfg.a500Chip512KB,
+                a600Chip2MB: cfg.a600Chip2MB
             )
         }
         let payload = PersistedConfig(activeModel: activeModel, profiles: encodedProfiles)
@@ -182,8 +190,14 @@ enum ConfigStore {
             }
             cfg.floppies = floppies.sorted { $0.unit < $1.unit }
             cfg.hardDrives = saved.hardDrives.filter { fm.fileExists(atPath: $0.imagePath) }
-            if let fast = saved.fastRamMB, [0, 2, 4, 8].contains(fast) {
+            if let fast = saved.fastRamMB, [0, 2, 4, 8, 16, 64, 128].contains(fast) {
                 cfg.fastRamMB = fast
+            }
+            if let chip512 = saved.a500Chip512KB {
+                cfg.a500Chip512KB = chip512
+            }
+            if let chip2mb = saved.a600Chip2MB {
+                cfg.a600Chip2MB = chip2mb
             }
         }
         return (active, result)

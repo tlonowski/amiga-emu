@@ -6,8 +6,7 @@
 #include <vector>
 
 int main(int argc, char **argv) {
-  const std::string path =
-      (argc > 1) ? argv[1] : "kickstart.rom";
+  const std::string path = (argc > 1) ? argv[1] : "kickstart.rom";
 
   std::vector<uint8_t> rom;
   std::string err;
@@ -33,13 +32,24 @@ int main(int argc, char **argv) {
     std::fprintf(stderr, "Unsupported ROM size: %zu\n", rom.size());
     return 1;
   }
+  const std::string ext_path =
+      (path.size() > 4 && path.substr(path.size() - 4) == ".rom")
+          ? (path.substr(0, path.size() - 4) + "-ext.rom")
+          : (path + "-ext.rom");
+  std::vector<uint8_t> ext_rom;
+  if (amiga::load_kickstart_file(ext_path, ext_rom) &&
+      a500.load_ext_rom(ext_rom.data(), ext_rom.size())) {
+    std::printf("Loaded Ext ROM: %s (%zu bytes)\n", ext_path.c_str(),
+                ext_rom.size());
+  }
   for (int ai = 2; ai < argc; ++ai) {
     const std::string p = argv[ai];
     if (p == "--zorro") {
       a500.set_fast_ram_mb(8);
       std::printf("Enabled 8MB Fast RAM\n");
     } else if (p == "--fast" && ai + 1 < argc) {
-      const uint32_t mb = static_cast<uint32_t>(std::strtoul(argv[++ai], nullptr, 10));
+      const uint32_t mb =
+          static_cast<uint32_t>(std::strtoul(argv[++ai], nullptr, 10));
       a500.set_fast_ram_mb(mb);
       std::printf("Enabled %uMB Fast RAM\n", mb);
     } else if (p.size() >= 4 && p.substr(p.size() - 4) == ".hdf") {
@@ -67,7 +77,12 @@ int main(int argc, char **argv) {
 
   uint16_t prev_color0 = a500.custom().color(0);
   uint64_t vbl_count = 0, ports_count = 0, exter_count = 0;
-  for (int frame = 1; frame <= 4000; ++frame) {
+  for (int frame = 1; frame <= 8000; ++frame) {
+    if (frame % 1000 == 0) {
+      std::printf("Frame %d: PC=$%08X SR=$%04X INTENA=$%04X DMACON=$%04X\n",
+                  frame, a500.cpu().pc(), a500.cpu().sr(),
+                  a500.custom().intena(), a500.custom().dmacon());
+    }
     for (int s = 0; s < 200000; ++s) {
       const uint16_t prev_v = a500.custom().vpos();
       a500.step_instruction();

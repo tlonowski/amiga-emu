@@ -2,6 +2,7 @@ import AppKit
 
 protocol RightDiskBrowserDelegate: AnyObject {
     func diskBrowserDidSelectDisk(_ path: String, unit: Int, resetMachine: Bool)
+    func diskBrowserDidSelectDiskSet(_ paths: [String], resetMachine: Bool)
     func diskBrowserDidRequestBlankDisk(unit: Int)
 }
 
@@ -11,6 +12,14 @@ private final class DiskTreeNode {
     var children: [DiskTreeNode]
 
     var isFolder: Bool { path == nil }
+
+    /// If this folder directly contains 1..4 .adf images (and no subfolders), returns their sorted paths.
+    var autoMountDiskPaths: [String]? {
+        guard isFolder, !children.isEmpty, children.count <= 4 else { return nil }
+        let paths = children.compactMap { $0.path }
+        guard paths.count == children.count else { return nil }
+        return paths
+    }
 
     init(name: String, path: String? = nil, children: [DiskTreeNode] = []) {
         self.name = name
@@ -193,7 +202,7 @@ final class RightDiskBrowserViewController: NSViewController, NSOutlineViewDataS
         func sortRecursive(_ node: DiskTreeNode) {
             node.children.sort {
                 if $0.isFolder != $1.isFolder { return $0.isFolder }
-                return $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+                return $0.name.localizedStandardCompare($1.name) == .orderedAscending
             }
             for child in node.children where child.isFolder {
                 sortRecursive(child)
@@ -225,17 +234,24 @@ final class RightDiskBrowserViewController: NSViewController, NSOutlineViewDataS
         applyFilter()
     }
 
-    private func selectedDiskPath() -> String? {
+    private func selectedNode() -> DiskTreeNode? {
         let row = outlineView.selectedRow
-        guard row >= 0, let node = outlineView.item(atRow: row) as? DiskTreeNode else { return nil }
-        return node.path
+        guard row >= 0 else { return nil }
+        return outlineView.item(atRow: row) as? DiskTreeNode
+    }
+
+    private func selectedDiskPath() -> String? {
+        return selectedNode()?.path
     }
 
     @objc private func onDoubleClick() {
         let row = outlineView.clickedRow >= 0 ? outlineView.clickedRow : outlineView.selectedRow
         guard row >= 0, let node = outlineView.item(atRow: row) as? DiskTreeNode else { return }
         if node.isFolder {
-            if outlineView.isItemExpanded(node) {
+            if let paths = node.autoMountDiskPaths {
+                outlineView.expandItem(node)
+                delegate?.diskBrowserDidSelectDiskSet(paths, resetMachine: false)
+            } else if outlineView.isItemExpanded(node) {
                 outlineView.collapseItem(node)
             } else {
                 outlineView.expandItem(node)
@@ -246,14 +262,22 @@ final class RightDiskBrowserViewController: NSViewController, NSOutlineViewDataS
     }
 
     @objc private func onInsertClicked() {
-        guard let path = selectedDiskPath() else { return }
-        let unit = max(0, unitPopup.selectedTag())
-        delegate?.diskBrowserDidSelectDisk(path, unit: unit, resetMachine: false)
+        guard let node = selectedNode() else { return }
+        if let paths = node.autoMountDiskPaths {
+            delegate?.diskBrowserDidSelectDiskSet(paths, resetMachine: false)
+        } else if let path = node.path {
+            let unit = max(0, unitPopup.selectedTag())
+            delegate?.diskBrowserDidSelectDisk(path, unit: unit, resetMachine: false)
+        }
     }
 
     @objc private func onBootClicked() {
-        guard let path = selectedDiskPath() else { return }
-        delegate?.diskBrowserDidSelectDisk(path, unit: 0, resetMachine: true)
+        guard let node = selectedNode() else { return }
+        if let paths = node.autoMountDiskPaths {
+            delegate?.diskBrowserDidSelectDiskSet(paths, resetMachine: true)
+        } else if let path = node.path {
+            delegate?.diskBrowserDidSelectDisk(path, unit: 0, resetMachine: true)
+        }
     }
 
     @objc private func onBlankClicked() {
@@ -262,6 +286,14 @@ final class RightDiskBrowserViewController: NSViewController, NSOutlineViewDataS
     }
 
     // MARK: - NSOutlineViewDataSource & Delegate
+
+    func outlineViewSelectionDidChange(_ notification: Notification) {
+        guard let node = selectedNode(), let paths = node.autoMountDiskPaths else { return }
+        if !outlineView.isItemExpanded(node) {
+            outlineView.expandItem(node)
+        }
+        delegate?.diskBrowserDidSelectDiskSet(paths, resetMachine: false)
+    }
 
     func outlineView(_ outlineView: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int {
         if let node = item as? DiskTreeNode {
@@ -287,12 +319,14 @@ final class RightDiskBrowserViewController: NSViewController, NSOutlineViewDataS
         let cell = NSTableCellView()
 
         let icon = NSImageView()
-        let symbolName = node.isFolder ? "folder.fill" : "opticaldiscdrive"
+        let autoDisks = node.autoMountDiskPaths
+        let symbolName = node.isFolder ? (autoDisks != nil ? "folder.fill.badge.plus" : "folder.fill") : "opticaldiscdrive"
         icon.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)
-        icon.contentTintColor = node.isFolder ? MonokaiTheme.yellow : MonokaiTheme.cyan
+        icon.contentTintColor = node.isFolder ? (autoDisks != nil ? MonokaiTheme.green : MonokaiTheme.yellow) : MonokaiTheme.cyan
         icon.translatesAutoresizingMaskIntoConstraints = false
 
-        let title = NSTextField(labelWithString: node.name)
+        let labelText = (autoDisks != nil) ? "\(node.name) (\(autoDisks!.count) ADF)" : node.name
+        let title = NSTextField(labelWithString: labelText)
         title.font = .systemFont(ofSize: 12, weight: node.isFolder ? .medium : .regular)
         title.textColor = node.isFolder ? MonokaiTheme.text : MonokaiTheme.text
         title.lineBreakMode = .byTruncatingTail

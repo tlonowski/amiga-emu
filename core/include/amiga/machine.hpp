@@ -4,6 +4,7 @@
 #include "amiga/cia.hpp"
 #include "amiga/custom.hpp"
 #include "amiga/floppy.hpp"
+#include "amiga/gayle_ide.hpp"
 #include "amiga/hard_drive.hpp"
 #include "amiga/m68k.hpp"
 
@@ -21,8 +22,14 @@ public:
 
     void set_model(AmigaModel model);
     AmigaModel model() const { return model_; }
+    void set_a500_chip_ram_512k(bool enabled) { bus_.set_a500_chip_ram_512k(enabled); }
+    bool a500_chip_ram_512k() const { return bus_.a500_chip_ram_512k(); }
+    void set_a600_chip_ram_2mb(bool enabled) { bus_.set_a600_chip_ram_2mb(enabled); }
+    bool a600_chip_ram_2mb() const { return bus_.a600_chip_ram_2mb(); }
     void set_fast_ram_mb(uint32_t mb) { bus_.set_fast_ram_mb(mb); }
     bool load_rom(const uint8_t* data, size_t size);
+    bool load_ext_rom(const uint8_t* data, size_t size);
+    void clear_ext_rom();
     bool insert_adf(const std::string& path);
     bool insert_adf(size_t unit, const std::string& path);
     void eject_adf();
@@ -55,6 +62,8 @@ public:
     const FloppyDrive& floppy() const { return floppies_[0]; }
     FloppyDrive& floppy(size_t unit) { return floppies_[unit < 4 ? unit : 0]; }
     const FloppyDrive& floppy(size_t unit) const { return floppies_[unit < 4 ? unit : 0]; }
+    GayleIde& gayle_ide() { return gayle_ide_; }
+    const GayleIde& gayle_ide() const { return gayle_ide_; }
     uint32_t led_state() const;
 
 private:
@@ -64,6 +73,7 @@ private:
     CustomChips custom_;
     std::array<FloppyDrive, 4> floppies_;
     HardDriveController hd_;
+    GayleIde gayle_ide_;
     AmigaBus bus_;
     M68k cpu_;
     uint32_t e_clock_rem_ = 0;

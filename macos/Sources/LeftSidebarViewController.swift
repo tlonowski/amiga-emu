@@ -12,6 +12,8 @@ protocol LeftSidebarDelegate: AnyObject {
     func sidebarDidRequestAddHardDrive(for profile: AmigaProfileConfig)
     func sidebarDidRequestCreateBlankHardDrive(for profile: AmigaProfileConfig)
     func sidebarDidRemoveHardDrive(unit: Int, for profile: AmigaProfileConfig)
+    func sidebarDidChangeA500ChipRam(use512KB: Bool, for profile: AmigaProfileConfig)
+    func sidebarDidChangeA600ChipRam(use2MB: Bool, for profile: AmigaProfileConfig)
     func sidebarDidChangeFastRam(mb: Int, for profile: AmigaProfileConfig)
     func sidebarDidRequestApplyAndReset(profile: AmigaProfileConfig)
 }
@@ -28,6 +30,11 @@ final class LeftSidebarViewController: NSViewController, NSTableViewDataSource, 
     private var titleLabel: NSTextField!
     private var hwHeaderLabel: NSTextField!
     private var applyBtn: NSButton!
+    private var floppyIconViews: [Int: NSImageView] = [:]
+    private var floppyLedViews: [Int: NSView] = [:]
+    private var hdIconViews: [NSImageView] = []
+    private var hdLedViews: [NSView] = []
+    private var lastLedState: UInt32 = 0xFFFF_FFFF
 
     func configure(profiles: [AmigaModelType: AmigaProfileConfig], selected: AmigaModelType) {
         self.profiles = profiles
@@ -38,6 +45,55 @@ final class LeftSidebarViewController: NSViewController, NSTableViewDataSource, 
     func updateSelected(_ model: AmigaModelType) {
         self.selectedModel = model
         reloadUI()
+    }
+
+    func updateDriveActivity(state: UInt32) {
+        guard state != lastLedState else { return }
+        lastLedState = state
+        applyDriveActivityStyles(state: state)
+    }
+
+    private func applyDriveActivityStyles(state: UInt32) {
+        let dfOnColor = NSColor(red: 1.0, green: 0.68, blue: 0.14, alpha: 1.0)
+        let dfGlowColor = NSColor(red: 1.0, green: 0.58, blue: 0.08, alpha: 1.0)
+        let dfOffLedColor = NSColor(red: 0.20, green: 0.15, blue: 0.08, alpha: 1.0)
+
+        for (unit, img) in floppyIconViews {
+            let active = (state & UInt32(0x10 << unit)) != 0
+            img.contentTintColor = active ? dfOnColor : MonokaiTheme.muted
+            img.layer?.shadowColor = active ? dfGlowColor.cgColor : nil
+            img.layer?.shadowOffset = .zero
+            img.layer?.shadowRadius = active ? 4.0 : 0
+            img.layer?.shadowOpacity = active ? 0.85 : 0
+        }
+        for (unit, led) in floppyLedViews {
+            let active = (state & UInt32(0x10 << unit)) != 0
+            led.layer?.backgroundColor = (active ? dfOnColor : dfOffLedColor).cgColor
+            led.layer?.shadowColor = active ? dfGlowColor.cgColor : nil
+            led.layer?.shadowOffset = .zero
+            led.layer?.shadowRadius = active ? 4.0 : 0
+            led.layer?.shadowOpacity = active ? 0.95 : 0
+        }
+
+        let hdActive = (state & 0x04) != 0
+        let hdOnColor = NSColor(red: 1.0, green: 0.28, blue: 0.20, alpha: 1.0)
+        let hdGlowColor = NSColor(red: 1.0, green: 0.20, blue: 0.14, alpha: 1.0)
+        let hdOffLedColor = NSColor(red: 0.22, green: 0.10, blue: 0.10, alpha: 1.0)
+
+        for img in hdIconViews {
+            img.contentTintColor = hdActive ? hdOnColor : MonokaiTheme.muted
+            img.layer?.shadowColor = hdActive ? hdGlowColor.cgColor : nil
+            img.layer?.shadowOffset = .zero
+            img.layer?.shadowRadius = hdActive ? 4.0 : 0
+            img.layer?.shadowOpacity = hdActive ? 0.85 : 0
+        }
+        for led in hdLedViews {
+            led.layer?.backgroundColor = (hdActive ? hdOnColor : hdOffLedColor).cgColor
+            led.layer?.shadowColor = hdActive ? hdGlowColor.cgColor : nil
+            led.layer?.shadowOffset = .zero
+            led.layer?.shadowRadius = hdActive ? 4.0 : 0
+            led.layer?.shadowOpacity = hdActive ? 0.95 : 0
+        }
     }
 
     func reloadUI() {
@@ -149,9 +205,18 @@ final class LeftSidebarViewController: NSViewController, NSTableViewDataSource, 
     }
 
     private func rebuildHardwareSection() {
+        floppyIconViews.removeAll()
+        floppyLedViews.removeAll()
+        hdIconViews.removeAll()
+        hdLedViews.removeAll()
         for v in hardwareStack.arrangedSubviews {
             hardwareStack.removeArrangedSubview(v)
             v.removeFromSuperview()
+        }
+        defer {
+            if lastLedState != 0xFFFF_FFFF {
+                applyDriveActivityStyles(state: lastLedState)
+            }
         }
         guard let profile = profiles[selectedModel] else { return }
 
@@ -207,7 +272,32 @@ final class LeftSidebarViewController: NSViewController, NSTableViewDataSource, 
         hdBtns.addArrangedSubview(newHd)
         hardwareStack.addArrangedSubview(hdBtns)
 
-        // 4. Fast RAM
+        // 4. Chip RAM (A500 rev 5 / 6a switch or A600 / A601 1 MB / 2 MB switch)
+        if selectedModel == .a500 {
+            hardwareStack.addArrangedSubview(makeSubTitle("Chip RAM (A500 rev 5 / 6a)"))
+            let chipSeg = NSSegmentedControl(
+                labels: ["512 KB + 512 KB Slow", "1 MB + 512 KB Slow"],
+                trackingMode: .selectOne,
+                target: self,
+                action: #selector(onA500ChipRamChanged(_:))
+            )
+            chipSeg.controlSize = .small
+            chipSeg.selectedSegment = profile.a500Chip512KB ? 0 : 1
+            hardwareStack.addArrangedSubview(chipSeg)
+        } else if selectedModel == .a600 {
+            hardwareStack.addArrangedSubview(makeSubTitle("Chip RAM (A600 / A601)"))
+            let chipSeg = NSSegmentedControl(
+                labels: ["1 MB Chip", "2 MB Chip (A601)"],
+                trackingMode: .selectOne,
+                target: self,
+                action: #selector(onA600ChipRamChanged(_:))
+            )
+            chipSeg.controlSize = .small
+            chipSeg.selectedSegment = profile.a600Chip2MB ? 1 : 0
+            hardwareStack.addArrangedSubview(chipSeg)
+        }
+
+        // 5. Fast RAM
         let isA4000 = (selectedModel == .a4000)
         hardwareStack.addArrangedSubview(makeSubTitle(isA4000 ? "Fast RAM (Zorro III)" : "Fast RAM"))
         let ramLabels = isA4000 ? [L10n.t("Brak", "None"), "16 MB", "64 MB", "128 MB"]
@@ -264,8 +354,23 @@ final class LeftSidebarViewController: NSViewController, NSTableViewDataSource, 
         top.alignment = .centerY
 
         let img = NSImageView()
+        img.wantsLayer = true
         img.image = NSImage(systemSymbolName: "opticaldiscdrive", accessibilityDescription: nil)
-        img.contentTintColor = unit == 0 ? MonokaiTheme.orange : MonokaiTheme.muted
+        img.contentTintColor = MonokaiTheme.muted
+        floppyIconViews[unit] = img
+
+        let led = NSView()
+        led.wantsLayer = true
+        led.layer?.cornerRadius = 1.1
+        led.layer?.borderWidth = 0.5
+        led.layer?.borderColor = NSColor(white: 0.05, alpha: 0.9).cgColor
+        led.layer?.backgroundColor = NSColor(red: 0.20, green: 0.15, blue: 0.08, alpha: 1.0).cgColor
+        led.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            led.widthAnchor.constraint(equalToConstant: 8),
+            led.heightAnchor.constraint(equalToConstant: 3)
+        ])
+        floppyLedViews[unit] = led
 
         let title = NSTextField(labelWithString: "DF\(unit): \(diskName)")
         title.font = .systemFont(ofSize: 11)
@@ -274,6 +379,7 @@ final class LeftSidebarViewController: NSViewController, NSTableViewDataSource, 
         title.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
         top.addArrangedSubview(img)
+        top.addArrangedSubview(led)
         top.addArrangedSubview(title)
 
         let btns = NSStackView()
@@ -328,7 +434,23 @@ final class LeftSidebarViewController: NSViewController, NSTableViewDataSource, 
         row.alignment = .centerY
 
         let img = NSImageView()
+        img.wantsLayer = true
         img.image = NSImage(systemSymbolName: "internaldrive", accessibilityDescription: nil)
+        img.contentTintColor = MonokaiTheme.muted
+        hdIconViews.append(img)
+
+        let led = NSView()
+        led.wantsLayer = true
+        led.layer?.cornerRadius = 1.1
+        led.layer?.borderWidth = 0.5
+        led.layer?.borderColor = NSColor(white: 0.05, alpha: 0.9).cgColor
+        led.layer?.backgroundColor = NSColor(red: 0.22, green: 0.10, blue: 0.10, alpha: 1.0).cgColor
+        led.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            led.widthAnchor.constraint(equalToConstant: 8),
+            led.heightAnchor.constraint(equalToConstant: 3)
+        ])
+        hdLedViews.append(led)
 
         let lbl = NSTextField(labelWithString: "DH\(unit): \(name)")
         lbl.font = .systemFont(ofSize: 11)
@@ -341,6 +463,7 @@ final class LeftSidebarViewController: NSViewController, NSTableViewDataSource, 
         delBtn.controlSize = .mini
 
         row.addArrangedSubview(img)
+        row.addArrangedSubview(led)
         row.addArrangedSubview(lbl)
         row.addArrangedSubview(delBtn)
         return row
@@ -386,6 +509,16 @@ final class LeftSidebarViewController: NSViewController, NSTableViewDataSource, 
         if let p = profiles[selectedModel] { delegate?.sidebarDidToggleFloppyWriteProtect(unit: sender.tag, for: p) }
     }
 
+    @objc private func onA500ChipRamChanged(_ sender: NSSegmentedControl) {
+        guard let p = profiles[.a500] else { return }
+        delegate?.sidebarDidChangeA500ChipRam(use512KB: sender.selectedSegment == 0, for: p)
+    }
+
+    @objc private func onA600ChipRamChanged(_ sender: NSSegmentedControl) {
+        guard let p = profiles[.a600] else { return }
+        delegate?.sidebarDidChangeA600ChipRam(use2MB: sender.selectedSegment == 1, for: p)
+    }
+
     @objc private func onFastRamChanged(_ sender: NSSegmentedControl) {
         let ramValues = (selectedModel == .a4000) ? [0, 16, 64, 128] : [0, 2, 4, 8]
         let idx = sender.selectedSegment
@@ -417,7 +550,15 @@ final class LeftSidebarViewController: NSViewController, NSTableViewDataSource, 
         title.textColor = MonokaiTheme.text
         title.translatesAutoresizingMaskIntoConstraints = false
 
-        let sub = NSTextField(labelWithString: model.subtitle)
+        let subtitleText: String
+        if model == .a500, let p = profiles[.a500], p.a500Chip512KB {
+            subtitleText = "OCS • 68000 • 512 KB Chip + 512 KB Slow"
+        } else if model == .a600, let p = profiles[.a600], p.a600Chip2MB {
+            subtitleText = "ECS • 68000 • 2 MB Chip (A601)"
+        } else {
+            subtitleText = model.subtitle
+        }
+        let sub = NSTextField(labelWithString: subtitleText)
         sub.font = .systemFont(ofSize: 10)
         sub.textColor = MonokaiTheme.muted
         sub.translatesAutoresizingMaskIntoConstraints = false

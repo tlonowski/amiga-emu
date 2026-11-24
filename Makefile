@@ -7,6 +7,7 @@ CORE_SRCS := \
 	core/src/chipset/cia.cpp \
 	core/src/chipset/custom.cpp \
 	core/src/chipset/floppy.cpp \
+	core/src/chipset/gayle_ide.cpp \
 	core/src/chipset/hard_drive.cpp \
 	core/src/memory/amiga_bus.cpp \
 	core/src/memory/rom_loader.cpp \
