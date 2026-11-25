@@ -64,6 +64,9 @@ final class AmigaMetalView: MTKView, MTKViewDelegate {
     private var joyLeft = false
     private var joyRight = false
     private var joyFire = false
+    private var hwJoyState = AmigaGameControllerManager.JoyState()
+    var onControllerStatusChanged: ((Int, String?) -> Void)?
+    private let gameControllerManager = AmigaGameControllerManager()
     private var mouseLeft = false
     private var mouseRight = false
     private var mouseAccX: Double = 0
@@ -155,11 +158,11 @@ final class AmigaMetalView: MTKView, MTKViewDelegate {
     private func pushJoystickState() {
         amiga_set_joystick(
             machine,
-            joyUp ? 1 : 0,
-            joyDown ? 1 : 0,
-            joyLeft ? 1 : 0,
-            joyRight ? 1 : 0,
-            joyFire ? 1 : 0
+            (joyUp || hwJoyState.up) ? 1 : 0,
+            (joyDown || hwJoyState.down) ? 1 : 0,
+            (joyLeft || hwJoyState.left) ? 1 : 0,
+            (joyRight || hwJoyState.right) ? 1 : 0,
+            (joyFire || hwJoyState.fire) ? 1 : 0
         )
     }
 
@@ -323,6 +326,15 @@ final class AmigaMetalView: MTKView, MTKViewDelegate {
         self.delegate = self
 
         setupMetal(device: device)
+
+        gameControllerManager.onStateChanged = { [weak self] state in
+            self?.hwJoyState = state
+            self?.pushJoystickState()
+        }
+        gameControllerManager.onControllersChanged = { [weak self] count, name in
+            self?.onControllerStatusChanged?(count, name)
+        }
+        gameControllerManager.start()
     }
 
     required init(coder: NSCoder) {

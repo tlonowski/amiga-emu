@@ -1072,9 +1072,17 @@ void CustomChips::render_scanline(uint16_t line) {
   const uint16_t words_per_line =
       static_cast<uint16_t>(num_blocks * fetch_words);
 
+  const bool bscan2 = aga_enabled_ && ((fmode_ & 0x4000u) != 0u);
+  auto line_bpl_mod = [&](uint8_t p) -> int16_t {
+    if (bscan2) {
+      return ((line & 1u) == (v_start & 1u)) ? bpl1mod_ : bpl2mod_;
+    }
+    return ((p & 1u) == 0u) ? bpl1mod_ : bpl2mod_;
+  };
+
   if (!dst) {
     for (uint8_t p = 0; p < bpu; ++p) {
-      const int16_t mod = ((p & 1u) == 0) ? bpl1mod_ : bpl2mod_;
+      const int16_t mod = line_bpl_mod(p);
       bplpt_[p] =
           static_cast<uint32_t>(static_cast<int32_t>(bplpt_[p]) +
                                 static_cast<int32_t>(words_per_line) * 2 + mod);
@@ -1321,7 +1329,7 @@ void CustomChips::render_scanline(uint16_t line) {
   }
 
   for (uint8_t p = 0; p < bpu; ++p) {
-    const int16_t mod = ((p & 1u) == 0) ? bpl1mod_ : bpl2mod_;
+    const int16_t mod = line_bpl_mod(p);
     bplpt_[p] = static_cast<uint32_t>(static_cast<int32_t>(bplpt_[p]) + mod);
   }
 
@@ -1395,7 +1403,10 @@ void CustomChips::render_scanline(uint16_t line) {
       if (!sp.done && line >= sp.vstart && line < sp.vstop) {
         spr_a[s] = read_spr_chan(sp.pt);
         spr_b[s] = read_spr_chan(sp.pt + (spr_stride / 2u));
-        sp.pt += spr_stride;
+        const bool sscan2 = aga_enabled_ && ((fmode_ & 0x8000u) != 0u);
+        if (!sscan2 || ((line & 1u) != (sp.vstart & 1u))) {
+          sp.pt += spr_stride;
+        }
         spr_vis[s] = true;
       }
     }

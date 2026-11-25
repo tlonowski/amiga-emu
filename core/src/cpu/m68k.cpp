@@ -212,7 +212,8 @@ uint16_t M68k::icache_read16(uint32_t logical_addr) {
   entry.tag = tag;
   entry.data = word32;
   entry.valid = true;
-  return static_cast<uint16_t>((eff & 2u) ? (word32 & 0xFFFFu) : (word32 >> 16));
+  return static_cast<uint16_t>((eff & 2u) ? (word32 & 0xFFFFu)
+                                          : (word32 >> 16));
 }
 
 void M68k::invalidate_dcache() {
@@ -433,6 +434,17 @@ void M68k::dcache_write(uint32_t logical_addr, Size s, uint32_t val) {
           : logical_addr;
   // 68030 D-Cache is always write-through to the external bus
   write_sized(bus_, addr, s, val);
+  if (is_020() && (cacr_ & 0x0001u) != 0u) {
+    const uint32_t eff = is_32bit() ? addr : (addr & 0x00FFFFFFu);
+    const uint32_t nbytes = static_cast<uint32_t>(s);
+    for (uint32_t b = 0; b < nbytes; ++b) {
+      const uint32_t a = eff + b;
+      ICacheEntry &ie = icache_[(a >> 2) & 0x3Fu];
+      if (ie.valid && ie.tag == (a >> 8)) {
+        ie.valid = false;
+      }
+    }
+  }
   if (!is_32bit() || (cacr_ & 0x0100u) == 0u || mmu_ci ||
       !bus_.is_data_cacheable(addr)) {
     return;
@@ -918,35 +930,35 @@ uint32_t M68k::execute_opcode(uint16_t op) {
       update_nz_flags(val, Size::Long);
       return 4;
     }
-  break;
-}
-case 0x8:
-return exec_group8(op);
-case 0x9:
-return exec_group9_or_d(op, false);
-case 0xA:
-raise_exception(10);
-return 34;
-case 0xB:
-return exec_group_b(op);
-case 0xC:
-return exec_group_c(op);
-case 0xD:
-return exec_group9_or_d(op, true);
-case 0xE:
-return exec_group_e(op);
-case 0xF:
-if (is_32bit() && (op & 0xFFC0u) == 0xF000u) {
-  return exec_mmu(op);
-}
-if (is_020() && (op & 0x0E00u) == 0x0200u) {
-  return exec_fpu(op);
-}
-raise_exception(11);
-return 34;
-default:
-break;
-}
+    break;
+  }
+  case 0x8:
+    return exec_group8(op);
+  case 0x9:
+    return exec_group9_or_d(op, false);
+  case 0xA:
+    raise_exception(10);
+    return 34;
+  case 0xB:
+    return exec_group_b(op);
+  case 0xC:
+    return exec_group_c(op);
+  case 0xD:
+    return exec_group9_or_d(op, true);
+  case 0xE:
+    return exec_group_e(op);
+  case 0xF:
+    if (is_32bit() && (op & 0xFFC0u) == 0xF000u) {
+      return exec_mmu(op);
+    }
+    if (is_020() && (op & 0x0E00u) == 0x0200u) {
+      return exec_fpu(op);
+    }
+    raise_exception(11);
+    return 34;
+  default:
+    break;
+  }
 
   raise_exception(4); // Illegal instruction
   return 34;

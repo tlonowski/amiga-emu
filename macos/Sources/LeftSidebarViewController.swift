@@ -1,6 +1,11 @@
 import AppKit
 
+enum SidebarTool: Int {
+    case reset, warp, joystick, print, fullScreen
+}
+
 protocol LeftSidebarDelegate: AnyObject {
+    func sidebarDidRequestTool(_ tool: SidebarTool)
     func sidebarDidSelectModel(_ model: AmigaModelType)
     func sidebarDidRequestRomPick(for profile: AmigaProfileConfig)
     func sidebarDidRequestInsertFloppy(unit: Int, for profile: AmigaProfileConfig)
@@ -30,6 +35,9 @@ final class LeftSidebarViewController: NSViewController, NSTableViewDataSource, 
     private var titleLabel: NSTextField!
     private var hwHeaderLabel: NSTextField!
     private var applyBtn: NSButton!
+    private var warpToolBtn: NSButton!
+    private var joyToolBtn: NSButton!
+    private let toolsRow = NSStackView()
     private var floppyIconViews: [Int: NSImageView] = [:]
     private var floppyLedViews: [Int: NSView] = [:]
     private var hdIconViews: [NSImageView] = []
@@ -45,6 +53,17 @@ final class LeftSidebarViewController: NSViewController, NSTableViewDataSource, 
     func updateSelected(_ model: AmigaModelType) {
         self.selectedModel = model
         reloadUI()
+    }
+
+    func setToolStates(warp: Bool, joystick: Bool) {
+        guard isViewLoaded else { return }
+        warpToolBtn?.state = warp ? .on : .off
+        joyToolBtn?.state = joystick ? .on : .off
+    }
+
+    @objc private func onToolClicked(_ sender: NSButton) {
+        guard let tool = SidebarTool(rawValue: sender.tag) else { return }
+        delegate?.sidebarDidRequestTool(tool)
     }
 
     func updateDriveActivity(state: UInt32) {
@@ -154,14 +173,43 @@ final class LeftSidebarViewController: NSViewController, NSTableViewDataSource, 
         applyBtn.keyEquivalent = ""
         applyBtn.translatesAutoresizingMaskIntoConstraints = false
 
+        func makeToolButton(_ symbol: String, _ tip: String, _ tool: SidebarTool, toggle: Bool) -> NSButton {
+            let b = NSButton()
+            b.image = NSImage(systemSymbolName: symbol, accessibilityDescription: tip)
+            b.imagePosition = .imageOnly
+            b.bezelStyle = .texturedRounded
+            b.setButtonType(toggle ? .pushOnPushOff : .momentaryPushIn)
+            b.toolTip = tip
+            b.tag = tool.rawValue
+            b.target = self
+            b.action = #selector(onToolClicked(_:))
+            return b
+        }
+        let resetBtn = makeToolButton("arrow.clockwise", L10n.t("Reset Amigi (Cmd+R)", "Reset Amiga (Cmd+R)"), .reset, toggle: false)
+        warpToolBtn = makeToolButton("hare", L10n.t("Tryb Warp 12x (Cmd+T)", "Warp 12x mode (Cmd+T)"), .warp, toggle: true)
+        joyToolBtn = makeToolButton("gamecontroller", L10n.t("Joystick na strzałkach + Shift (Cmd+J)", "Arrow keys + Shift Joystick (Cmd+J)"), .joystick, toggle: true)
+        let printBtn = makeToolButton("printer", L10n.t("Drukuj wydruk z Amigi (Cmd+P)", "Print Amiga output (Cmd+P)"), .print, toggle: false)
+        let fullBtn = makeToolButton("arrow.up.left.and.arrow.down.right", L10n.t("Pełen ekran (Cmd+F)", "Full Screen (Cmd+F)"), .fullScreen, toggle: false)
+        toolsRow.orientation = .horizontal
+        toolsRow.distribution = .fillEqually
+        toolsRow.spacing = 6
+        toolsRow.translatesAutoresizingMaskIntoConstraints = false
+        for b in [resetBtn, warpToolBtn!, joyToolBtn!, printBtn, fullBtn] {
+            toolsRow.addArrangedSubview(b)
+        }
+
         root.addSubview(titleLabel)
         root.addSubview(tableScroll)
         root.addSubview(divider)
-        root.addSubview(hwHeader)
         root.addSubview(scrollView)
+        root.addSubview(toolsRow)
         root.addSubview(applyBtn)
 
         NSLayoutConstraint.activate([
+            toolsRow.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 12),
+            toolsRow.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -12),
+            toolsRow.topAnchor.constraint(equalTo: divider.bottomAnchor, constant: 10),
+
             titleLabel.topAnchor.constraint(equalTo: root.safeAreaLayoutGuide.topAnchor, constant: 10),
             titleLabel.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 14),
             titleLabel.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -14),
@@ -175,11 +223,7 @@ final class LeftSidebarViewController: NSViewController, NSTableViewDataSource, 
             divider.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 10),
             divider.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -10),
 
-            hwHeader.topAnchor.constraint(equalTo: divider.bottomAnchor, constant: 10),
-            hwHeader.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 14),
-            hwHeader.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -14),
-
-            scrollView.topAnchor.constraint(equalTo: hwHeader.bottomAnchor, constant: 4),
+            scrollView.topAnchor.constraint(equalTo: toolsRow.bottomAnchor, constant: 8),
             scrollView.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             scrollView.bottomAnchor.constraint(equalTo: applyBtn.topAnchor, constant: -8),

@@ -28,6 +28,7 @@ let package = Package(
             linkerSettings: [
                 .linkedFramework("AppKit"),
                 .linkedFramework("AVFoundation"),
+                .linkedFramework("GameController"),
                 .linkedFramework("Metal"),
                 .linkedFramework("MetalKit")
             ]

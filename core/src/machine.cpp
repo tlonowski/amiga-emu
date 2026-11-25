@@ -153,7 +153,7 @@ uint32_t Amiga500::step_instruction() {
     const uint32_t cpu_cycles = cpu_.step();
     uint32_t cycles = cpu_cycles;
     if (model_ == AmigaModel::A1200) {
-        cycles = std::max<uint32_t>(1u, cpu_cycles / 2u);
+        cycles = std::max<uint32_t>(1u, cpu_cycles / 3u);
     } else if (model_ == AmigaModel::A4000) {
         cycles = std::max<uint32_t>(1u, cpu_cycles / 4u);
     }

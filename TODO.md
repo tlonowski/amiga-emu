@@ -29,4 +29,4 @@
 - [x] **Rejestry płyty głównej A4000 (`Super Buster` rev 11, `Gary`, `Ramsey` rev 7):** pełny odczyt/zapis rejestrów konfiguracyjnych `$DE0000–$DE1000` dla poprawnego rozpoznawania rewizji układów A4000 przez programy diagnostyczne.
 
 ## Kontrolery i urządzenia zewnętrzne
-- [ ] **Portowanie joysticków z JoyPort do USB / Bluetooth:** obsługa fizycznych kontrolerów USB / Bluetooth (`GCController` / `IOHIDManager`) mapowanych na porty joysticka Amigi.
+- [x] **Portowanie joysticków z JoyPort do USB / Bluetooth:** obsługa fizycznych kontrolerów USB / Bluetooth (`GCController` / `IOHIDManager`) mapowanych na porty joysticka Amigi.

@@ -607,6 +607,98 @@ void test_a600_ecs_and_memory_map() {
     EXPECT_EQ(a600.bus().read8(0x00DAB000u), 0x09u);
 }
 
+void test_aga_bscan2_scan_doubling() {
+    amiga::Amiga500 a1200;
+    a1200.set_model(amiga::AmigaModel::A1200);
+    a1200.reset();
+    a1200.bus().write8(0x00BFE201u, 0x03u);
+    a1200.bus().write8(0x00BFE001u, 0x00u);  // OVL off
+
+    // Set up 2 bitplanes in Chip RAM (row 0 = 0xFFFF/0x0000 -> color 1, row 1 = 0x0000/0xFFFF -> color 2)
+    // Width = 40 bytes (DDFSTRT=$38..DDFSTOP=$D0, 16-bit fetch)
+    for (uint32_t i = 0; i < 20; ++i) {
+        a1200.bus().write16(0x010000u + i * 2u, 0xFFFFu);       // BPL1 row 0
+        a1200.bus().write16(0x010000u + 40u + i * 2u, 0x0000u); // BPL1 row 1
+        a1200.bus().write16(0x011000u + i * 2u, 0x0000u);       // BPL2 row 0
+        a1200.bus().write16(0x011000u + 40u + i * 2u, 0xFFFFu); // BPL2 row 1
+    }
+    auto& c = a1200.custom();
+    c.write16(0x096u, 0x8300u);  // DMACON: DMAEN + BPLEN
+    c.write16(0x08Eu, 0x2C81u);  // DIWSTRT: v_start = 44 (even)
+    c.write16(0x090u, 0x2CC1u);  // DIWSTOP
+    c.write16(0x092u, 0x0038u);  // DDFSTRT
+    c.write16(0x094u, 0x00D0u);  // DDFSTOP (40 bytes/line)
+    c.write16(0x100u, 0x2200u);  // BPLCON0: 2 bitplanes, LORES, COLOR
+    c.write16(0x108u, static_cast<uint16_t>(-40)); // BPL1MOD = -40 (repeat line)
+    c.write16(0x10Au, 0x0000u);                    // BPL2MOD = 0 (advance line)
+    c.write16(0x1FCu, 0x4000u);                    // FMODE: BSCAN2 = 1
+    c.write16(0x180u, 0x0000u);
+    c.write16(0x182u, 0x0F00u);  // color 1 = red
+    c.write16(0x184u, 0x00F0u);  // color 2 = green
+    c.write16(0x0E0u, 0x0001u); c.write16(0x0E2u, 0x0000u); // BPL1PT = $010000
+    c.write16(0x0E4u, 0x0001u); c.write16(0x0E6u, 0x1000u); // BPL2PT = $011000
+
+    bool idx = false;
+    for (int l = 0; l < 50; ++l) {
+        c.tick_cpu_cycles(amiga::CustomChips::CPU_CYCLES_PER_LINE, false, false, idx);
+    }
+    const uint32_t* fb = c.framebuffer();
+    const int W = amiga::CustomChips::FB_WIDTH;
+    // line 44 (fb_row 32) and line 45 (fb_row 34) both display row 0 (red = 0xFFFF0000)
+    // line 46 (fb_row 36) and line 47 (fb_row 38) both display row 1 (green = 0xFF00FF00)
+    EXPECT_EQ(fb[32 * W + 100], 0xFFFF0000u);
+    EXPECT_EQ(fb[34 * W + 100], 0xFFFF0000u);
+    EXPECT_EQ(fb[36 * W + 100], 0xFF00FF00u);
+    EXPECT_EQ(fb[38 * W + 100], 0xFF00FF00u);
+}
+
+void test_blitter_line_octants() {
+    amiga::Amiga500 a500;
+    a500.set_model(amiga::AmigaModel::A500);
+    a500.reset();
+    a500.bus().write8(0x00BFE201u, 0x03u);
+    a500.bus().write8(0x00BFE001u, 0x00u);  // OVL off
+
+    // Clear 40x16 bitmap at $010000 (stride 40 bytes)
+    for (uint32_t i = 0; i < 40 * 16; i += 2) {
+        a500.bus().write16(0x010000u + i, 0x0000u);
+    }
+
+    auto& c = a500.custom();
+    c.write16(0x096u, 0x8240u);  // DMACON: DMAEN + BLTEN
+
+    // Draw a line in Octant 3: dx=8, dy=4, -X major (AUL=1), +Y minor (SUL=0) -> SUD=1 (0x10), SUL=0, AUL=1 (0x04), LINE=1 (0x01)
+    // Start at (x=10, y=2) -> word offset = 2*40 + 0 = 80 ($010050), bit = 10
+    c.write16(0x040u, static_cast<uint16_t>((10u << 12) | 0x0BCAu)); // BLTCON0: ASH=10, USEA|USEC|USED, LF=$CA
+    c.write16(0x042u, 0x0015u);  // BLTCON1: SUD=1, SUL=0, AUL=1, LINE=1 (Octant 3: -X major, +Y minor)
+    c.write16(0x044u, 0xFFFFu);  // BLTAFWM
+    c.write16(0x046u, 0xFFFFu);  // BLTALWM
+    c.write16(0x074u, 0x8000u);  // BLTADAT
+    c.write16(0x072u, 0xFFFFu);  // BLTBDAT (solid)
+    c.write16(0x064u, static_cast<uint16_t>(4 * 4 - 4 * 8)); // BLTAMOD = 4*dy - 4*dx = -16
+    c.write16(0x062u, static_cast<uint16_t>(4 * 4));         // BLTBMOD = 4*dy = 16
+    c.write16(0x060u, 40u);      // BLTCMOD = stride 40
+    c.write16(0x066u, 40u);      // BLTDMOD = stride 40
+    c.write16(0x050u, 0x0000u);
+    c.write16(0x052u, static_cast<uint16_t>(4 * 4 - 2 * 8)); // BLTAPT = 4*dy - 2*dx = 0
+    c.write16(0x048u, 0x0001u); c.write16(0x04Au, 0x0050u);  // BLTCPT = $010050 (y=2)
+    c.write16(0x054u, 0x0001u); c.write16(0x056u, 0x0050u);  // BLTDPT = $010050 (y=2)
+    c.write16(0x058u, static_cast<uint16_t>((8u << 6) | 2u)); // BLTSIZE: 8 pixels
+
+    bool idx = false;
+    c.tick_cpu_cycles(500, false, false, idx);
+
+    // Must move in -X (bits 10 -> 3, i.e. 0x0020 -> 0x1000) and +Y (y=2 -> y=5, NOT y=0!)
+    // At y=2 (row 2), bit 10 (0x0020) is set; at y=5 (row 5), pixels moved down (+Y) and left (-X)
+    const uint16_t row2 = a500.bus().read16(0x010000u + 2u * 40u);
+    const uint16_t row5 = a500.bus().read16(0x010000u + 5u * 40u);
+    const uint16_t row0 = a500.bus().read16(0x010000u + 0u * 40u);
+    EXPECT_EQ((row2 & 0x0020u) != 0, true);  // Start pixel at (10, 2)
+    EXPECT_EQ(row5 != 0, true);              // Progressed downward (+Y)
+    EXPECT_EQ(row0, 0x0000u);                // Did NOT go upward (-Y)
+    EXPECT_EQ((row5 & 0x3C00u) != 0, true);  // Moved left (-X) toward bits 2..5
+}
+
 }  // namespace
 
 int main() {
@@ -624,6 +716,8 @@ int main() {
     test_a4000_native_ide_controller();
     test_a4000_motherboard_registers();
     test_a600_ecs_and_memory_map();
+    test_aga_bscan2_scan_doubling();
+    test_blitter_line_octants();
 
     if (g_failures == 0) {
         std::printf("All Amiga boot tests passed.\n");

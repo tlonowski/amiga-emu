@@ -68,9 +68,9 @@ private final class AmigaSlotLedView: NSView {
 }
 
 private final class AmigaLedBarView: NSView {
-    private let pwrDot = AmigaSlotLedView(width: 18, height: 4.5)
-    private let dfDot = AmigaSlotLedView(width: 18, height: 4.5)
-    private let hdDot = AmigaSlotLedView(width: 18, height: 4.5)
+    private let pwrDot = AmigaSlotLedView(width: 24, height: 6.5)
+    private let dfDot = AmigaSlotLedView(width: 24, height: 6.5)
+    private let hdDot = AmigaSlotLedView(width: 24, height: 6.5)
     private var lastState: UInt32 = 0xFFFF_FFFF
 
     override init(frame frameRect: NSRect) {
@@ -83,7 +83,7 @@ private final class AmigaLedBarView: NSView {
 
         let stack = NSStackView()
         stack.orientation = .horizontal
-        stack.spacing = 10
+        stack.spacing = 8
         stack.alignment = .centerY
         stack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(stack)
@@ -95,26 +95,16 @@ private final class AmigaLedBarView: NSView {
             stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -3)
         ])
 
-        func makeLedUnit(label: String, dot: AmigaSlotLedView) -> NSView {
-            let row = NSStackView()
-            row.orientation = .horizontal
-            row.spacing = 5
-            row.alignment = .centerY
+        pwrDot.translatesAutoresizingMaskIntoConstraints = false
+        dfDot.translatesAutoresizingMaskIntoConstraints = false
+        hdDot.translatesAutoresizingMaskIntoConstraints = false
+        pwrDot.toolTip = "POWER"
+        dfDot.toolTip = "F. DISK"
+        hdDot.toolTip = "H. DISK"
 
-            dot.translatesAutoresizingMaskIntoConstraints = false
-
-            let lbl = NSTextField(labelWithString: label)
-            lbl.font = .systemFont(ofSize: 8.5, weight: .semibold)
-            lbl.textColor = NSColor(white: 0.72, alpha: 1.0)
-
-            row.addArrangedSubview(lbl)
-            row.addArrangedSubview(dot)
-            return row
-        }
-
-        stack.addArrangedSubview(makeLedUnit(label: "POWER", dot: pwrDot))
-        stack.addArrangedSubview(makeLedUnit(label: "F. DISK", dot: dfDot))
-        stack.addArrangedSubview(makeLedUnit(label: "H. DISK", dot: hdDot))
+        stack.addArrangedSubview(pwrDot)
+        stack.addArrangedSubview(dfDot)
+        stack.addArrangedSubview(hdDot)
 
         update(state: 0x01)
     }
@@ -124,7 +114,7 @@ private final class AmigaLedBarView: NSView {
     }
 
     override var intrinsicContentSize: NSSize {
-        return NSSize(width: 196, height: 20)
+        return NSSize(width: 108, height: 20)
     }
 
     func update(state: UInt32) {
@@ -234,12 +224,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTo
 
     private let tbLeftSidebar = NSToolbarItem.Identifier("toggleLeftSidebar")
     private let tbLeds = NSToolbarItem.Identifier("amigaLeds")
-    private let tbReset = NSToolbarItem.Identifier("resetAmiga")
-    private let tbWarp = NSToolbarItem.Identifier("toggleWarp")
-    private let tbJoy = NSToolbarItem.Identifier("toggleJoystick")
-    private let tbPrint = NSToolbarItem.Identifier("printAmiga")
-    private let tbFullScreen = NSToolbarItem.Identifier("toggleFullScreen")
     private let tbRightSidebar = NSToolbarItem.Identifier("toggleRightSidebar")
+    private let titleBarLabel = NSTextField(labelWithString: "")
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         AmigaPaths.ensureDirectoryStructure()
@@ -259,6 +245,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTo
         metalView = AmigaMetalView(frame: NSRect(x: 0, y: 0, width: 800, height: 600), machine: machine)
         metalView.onMouseGrabChanged = { [weak self] grabbed in
             self?.mouseMenuItem?.state = grabbed ? .on : .off
+            self?.updateWindowTitle()
+        }
+        metalView.onControllerStatusChanged = { [weak self] count, name in
+            self?.connectedControllerName = (count > 0) ? (name ?? "USB/BT") : nil
             self?.updateWindowTitle()
         }
 
@@ -310,6 +300,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTo
         toolbar.displayMode = .iconOnly
         toolbar.allowsUserCustomization = false
         mainToolbar = toolbar
+        window.titleVisibility = .hidden
         window.toolbar = toolbar
         window.toolbarStyle = .unified
 
@@ -397,16 +388,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTo
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         return [
+            .sidebarTrackingSeparator,
             tbLeftSidebar,
             .flexibleSpace,
             tbLeds,
-            .space,
-            tbReset,
-            tbWarp,
-            tbJoy,
-            tbPrint,
-            tbFullScreen,
-            .space,
             tbRightSidebar
         ]
     }
@@ -416,14 +401,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTo
     }
 
     func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier itemIdentifier: NSToolbarItem.Identifier, willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
+        if itemIdentifier == .sidebarTrackingSeparator {
+            return NSTrackingSeparatorToolbarItem(identifier: .sidebarTrackingSeparator, splitView: splitVC.splitView, dividerIndex: 0)
+        }
         let item = NSToolbarItem(itemIdentifier: itemIdentifier)
         item.target = self
         switch itemIdentifier {
         case tbLeftSidebar:
+            let btn = NSButton(
+                image: NSImage(systemSymbolName: "sidebar.left", accessibilityDescription: L10n.t("Maszyny", "Machines")) ?? NSImage(),
+                target: self,
+                action: #selector(toggleLeftSidebar)
+            )
+            btn.bezelStyle = .texturedRounded
+            btn.isBordered = false
+            btn.imagePosition = .imageOnly
+            btn.toolTip = L10n.t("Pokaż/ukryj panel maszyn Amigi (Cmd+1)", "Show/hide Amiga machines panel (Cmd+1)")
+            btn.translatesAutoresizingMaskIntoConstraints = false
+            btn.widthAnchor.constraint(equalToConstant: 28).isActive = true
+            btn.heightAnchor.constraint(equalToConstant: 24).isActive = true
+
+            titleBarLabel.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
+            titleBarLabel.textColor = MonokaiTheme.text
+            titleBarLabel.lineBreakMode = .byTruncatingTail
+            titleBarLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+            let stack = NSStackView(views: [btn, titleBarLabel])
+            stack.orientation = .horizontal
+            stack.alignment = .centerY
+            stack.spacing = 6
             item.label = L10n.t("Maszyny", "Machines")
-            item.toolTip = L10n.t("Pokaż/ukryj panel maszyn Amigi (Cmd+1)", "Show/hide Amiga machines panel (Cmd+1)")
-            item.image = NSImage(systemSymbolName: "sidebar.left", accessibilityDescription: item.label)
-            item.action = #selector(toggleLeftSidebar)
+            item.view = stack
         case tbLeds:
             item.label = L10n.t("Diody Amigi", "Amiga LEDs")
             item.toolTip = L10n.t("PWR (zasilanie) • DF (stacja dyskietek + ścieżka) • HD (dysk twardy)", "PWR (power) • DF (floppy + track) • HD (hard drive)")
@@ -433,31 +441,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTo
             item.toolTip = L10n.t("Pokaż/ukryj panel obrazów dysków (Cmd+2)", "Show/hide disk images panel (Cmd+2)")
             item.image = NSImage(systemSymbolName: "sidebar.right", accessibilityDescription: item.label)
             item.action = #selector(toggleRightSidebar)
-        case tbReset:
-            item.label = "Reset"
-            item.toolTip = L10n.t("Reset Amigi (Cmd+R)", "Reset Amiga (Cmd+R)")
-            item.image = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: "Reset")
-            item.action = #selector(resetMachine)
-        case tbWarp:
-            item.label = "Warp 12x"
-            item.toolTip = L10n.t("Tryb Warp 12x (Cmd+T)", "Warp 12x mode (Cmd+T)")
-            item.image = NSImage(systemSymbolName: "hare", accessibilityDescription: "Warp")
-            item.action = #selector(toggleWarpToolbar)
-        case tbJoy:
-            item.label = "Joystick"
-            item.toolTip = L10n.t("Joystick na strzałkach + Shift (Cmd+J)", "Arrow keys + Shift Joystick (Cmd+J)")
-            item.image = NSImage(systemSymbolName: "gamecontroller", accessibilityDescription: "Joystick")
-            item.action = #selector(toggleJoystickToolbar)
-        case tbPrint:
-            item.label = L10n.t("Drukuj", "Print")
-            item.toolTip = L10n.t("Drukuj wydruk z Amigi (PRT:/PAR:/SER:) na drukarce macOS (Cmd+P)", "Print Amiga output (PRT:/PAR:/SER:) to macOS printer (Cmd+P)")
-            item.image = NSImage(systemSymbolName: "printer", accessibilityDescription: item.label)
-            item.action = #selector(printAmigaOutput)
-        case tbFullScreen:
-            item.label = L10n.t("Pełen ekran", "Full Screen")
-            item.toolTip = L10n.t("Pełen ekran (Cmd+F)", "Full Screen (Cmd+F)")
-            item.image = NSImage(systemSymbolName: "arrow.up.left.and.arrow.down.right", accessibilityDescription: item.label)
-            item.action = #selector(toggleFullScreen)
         default:
             return nil
         }
@@ -557,13 +540,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTo
         window.makeFirstResponder(metalView)
     }
 
+    private var connectedControllerName: String?
+
     private func updateWindowTitle() {
         var tags: [String] = []
         if metalView.joystickMode { tags.append("[JOY]") }
+        if let pad = connectedControllerName { tags.append("[PAD: \(pad)]") }
         if metalView.mouseGrabbed { tags.append("[MOUSE - Cmd+M release]") }
         if metalView.warpMode { tags.append("[WARP 12x]") }
         let base = "\(activeModel.rawValue) — Native macOS Emulator"
-        window.title = tags.isEmpty ? base : (base + " " + tags.joined(separator: " "))
+        let fullTitle = tags.isEmpty ? base : (base + " " + tags.joined(separator: " "))
+        window.title = fullTitle
+        titleBarLabel.stringValue = fullTitle
+        leftVC?.setToolStates(warp: metalView.warpMode, joystick: metalView.joystickMode)
     }
 
     func windowDidResignKey(_ notification: Notification) {
@@ -602,6 +591,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTo
             metalView.stretchWidescreen = false
             NSApp.presentationOptions = []
             window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
+            window.titleVisibility = .hidden
             window.toolbar = mainToolbar
             window.toolbarStyle = .unified
             leftSidebarItem.isCollapsed = savedLeftCollapsed
@@ -671,6 +661,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTo
     }
 
     // MARK: - LeftSidebarDelegate
+
+    func sidebarDidRequestTool(_ tool: SidebarTool) {
+        switch tool {
+        case .reset: resetMachine()
+        case .warp: toggleWarpToolbar()
+        case .joystick: toggleJoystickToolbar()
+        case .print: printAmigaOutput()
+        case .fullScreen: toggleFullScreen()
+        }
+    }
 
     func sidebarDidSelectModel(_ model: AmigaModelType) {
         activeModel = model

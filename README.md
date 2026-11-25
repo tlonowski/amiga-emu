@@ -1,6 +1,6 @@
 # AmigaEmu
 
-**Version:** `1.4.28`
+**Version:** `1.4.29`
 
 Native Amiga emulator for macOS (Apple Silicon & Intel) written in **C++20** (`AmigaCore`) and **Swift / AppKit / Metal** (`AmigaEmuApp`), licensed under the **GNU General Public License v3.0 (GPL-3.0)**.
 
