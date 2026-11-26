@@ -3,6 +3,7 @@ import AppKit
 protocol RightDiskBrowserDelegate: AnyObject {
     func diskBrowserDidSelectDisk(_ path: String, unit: Int, resetMachine: Bool)
     func diskBrowserDidSelectDiskSet(_ paths: [String], resetMachine: Bool)
+    func diskBrowserDidSelectSnapshot(_ path: String)
     func diskBrowserDidRequestBlankDisk(unit: Int)
 }
 
@@ -12,12 +13,18 @@ private final class DiskTreeNode {
     var children: [DiskTreeNode]
 
     var isFolder: Bool { path == nil }
+    var isSnapshot: Bool {
+        guard let p = path?.lowercased() else { return false }
+        return p.hasSuffix(".arf")
+    }
 
-    /// If this folder directly contains 1..4 .adf images (and no subfolders), returns their sorted paths.
+    /// If this folder directly contains 1..4 floppy images (and no subfolders or .arf snapshots), returns their sorted paths.
     var autoMountDiskPaths: [String]? {
         guard isFolder, !children.isEmpty, children.count <= 4 else { return nil }
+        if name.lowercased() == "saves" { return nil }
         let paths = children.compactMap { $0.path }
         guard paths.count == children.count else { return nil }
+        if paths.contains(where: { $0.lowercased().hasSuffix(".arf") }) { return nil }
         return paths
     }
 
@@ -166,6 +173,12 @@ final class RightDiskBrowserViewController: NSViewController, NSOutlineViewDataS
         applyFilter()
     }
 
+    func expandSavesFolder() {
+        if let savesNode = rootNodes.first(where: { $0.isFolder && $0.name.lowercased() == "saves" }) {
+            outlineView.expandItem(savesNode)
+        }
+    }
+
     func refreshLocalization() {
         guard isViewLoaded else { return }
         headerLabel?.stringValue = L10n.t("OBRAZY DYSKÓW (.ADF)", "DISK IMAGES (.ADF)")
@@ -182,7 +195,12 @@ final class RightDiskBrowserViewController: NSViewController, NSOutlineViewDataS
         let prefix = DiskLibrary.rootPath.hasSuffix("/") ? DiskLibrary.rootPath : (DiskLibrary.rootPath + "/")
 
         for item in items {
-            let rel = item.path.hasPrefix(prefix) ? String(item.path.dropFirst(prefix.count)) : item.name
+            let rel: String
+            if item.path.hasPrefix(prefix) {
+                rel = String(item.path.dropFirst(prefix.count))
+            } else {
+                rel = "\(item.category)/\(item.name)"
+            }
             let parts = rel.split(separator: "/").map(String.init)
             var current = root
             if parts.count > 1 {
@@ -257,7 +275,11 @@ final class RightDiskBrowserViewController: NSViewController, NSOutlineViewDataS
                 outlineView.expandItem(node)
             }
         } else if let path = node.path {
-            delegate?.diskBrowserDidSelectDisk(path, unit: 0, resetMachine: false)
+            if node.isSnapshot {
+                delegate?.diskBrowserDidSelectSnapshot(path)
+            } else {
+                delegate?.diskBrowserDidSelectDisk(path, unit: 0, resetMachine: false)
+            }
         }
     }
 
@@ -266,8 +288,12 @@ final class RightDiskBrowserViewController: NSViewController, NSOutlineViewDataS
         if let paths = node.autoMountDiskPaths {
             delegate?.diskBrowserDidSelectDiskSet(paths, resetMachine: false)
         } else if let path = node.path {
-            let unit = max(0, unitPopup.selectedTag())
-            delegate?.diskBrowserDidSelectDisk(path, unit: unit, resetMachine: false)
+            if node.isSnapshot {
+                delegate?.diskBrowserDidSelectSnapshot(path)
+            } else {
+                let unit = max(0, unitPopup.selectedTag())
+                delegate?.diskBrowserDidSelectDisk(path, unit: unit, resetMachine: false)
+            }
         }
     }
 
@@ -276,7 +302,11 @@ final class RightDiskBrowserViewController: NSViewController, NSOutlineViewDataS
         if let paths = node.autoMountDiskPaths {
             delegate?.diskBrowserDidSelectDiskSet(paths, resetMachine: true)
         } else if let path = node.path {
-            delegate?.diskBrowserDidSelectDisk(path, unit: 0, resetMachine: true)
+            if node.isSnapshot {
+                delegate?.diskBrowserDidSelectSnapshot(path)
+            } else {
+                delegate?.diskBrowserDidSelectDisk(path, unit: 0, resetMachine: true)
+            }
         }
     }
 
@@ -320,12 +350,39 @@ final class RightDiskBrowserViewController: NSViewController, NSOutlineViewDataS
 
         let icon = NSImageView()
         let autoDisks = node.autoMountDiskPaths
-        let symbolName = node.isFolder ? (autoDisks != nil ? "folder.fill.badge.plus" : "folder.fill") : "opticaldiscdrive"
+        let isSavesFolder = node.isFolder && node.name.lowercased() == "saves"
+        let symbolName: String
+        let tintColor: NSColor
+        if node.isFolder {
+            if isSavesFolder {
+                symbolName = "folder.fill.badge.gearshape"
+                tintColor = MonokaiTheme.pink
+            } else if autoDisks != nil {
+                symbolName = "folder.fill.badge.plus"
+                tintColor = MonokaiTheme.green
+            } else {
+                symbolName = "folder.fill"
+                tintColor = MonokaiTheme.yellow
+            }
+        } else if node.isSnapshot {
+            symbolName = "snowflake"
+            tintColor = MonokaiTheme.pink
+        } else {
+            symbolName = "opticaldiscdrive"
+            tintColor = MonokaiTheme.cyan
+        }
         icon.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)
-        icon.contentTintColor = node.isFolder ? (autoDisks != nil ? MonokaiTheme.green : MonokaiTheme.yellow) : MonokaiTheme.cyan
+        icon.contentTintColor = tintColor
         icon.translatesAutoresizingMaskIntoConstraints = false
 
-        let labelText = (autoDisks != nil) ? "\(node.name) (\(autoDisks!.count) ADF)" : node.name
+        let labelText: String
+        if let autoDisks = autoDisks {
+            labelText = "\(node.name) (\(autoDisks.count) ADF)"
+        } else if node.isSnapshot {
+            labelText = "\(node.name).arf"
+        } else {
+            labelText = node.name
+        }
         let title = NSTextField(labelWithString: labelText)
         title.font = .systemFont(ofSize: 12, weight: node.isFolder ? .medium : .regular)
         title.textColor = node.isFolder ? MonokaiTheme.text : MonokaiTheme.text

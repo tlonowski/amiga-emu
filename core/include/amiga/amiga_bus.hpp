@@ -55,6 +55,91 @@ public:
     void set_hard_drive(HardDriveController* hd) { hd_ = hd; }
     void set_gayle_ide(GayleIde* ide) { gayle_ide_ = ide; }
 
+    struct ConfigStateSnapshot {
+        uint8_t model = 0;
+        uint8_t a500_chip_512k = 0;
+        uint8_t a600_chip_2mb = 0;
+        uint8_t fast_ram_configured = 0;
+        uint8_t fast_ram_shut_up = 0;
+        uint32_t fast_ram_base = 0;
+        uint8_t gayle_id_shift = 0;
+        uint8_t gayle_status = 0;
+        uint8_t gayle_intreq = 0;
+        uint8_t gayle_intena = 0;
+        uint8_t gayle_cfg = 0;
+        uint8_t ramsey_ctrl = 0x08u;
+        uint8_t gary_coldstart = 0x80u;
+        uint8_t gary_toenb = 0x80u;
+        uint8_t gary_timeout = 0x00u;
+        uint8_t buster_ctrl = 0x0Bu;
+        uint8_t rtc_ctrl_d = 0x08u;
+        uint8_t rtc_ctrl_e = 0x00u;
+        uint8_t rtc_ctrl_f = 0x04u;
+        uint8_t rtc_24h = 1;
+        std::array<uint8_t, 16> rtc_bank1{};
+        std::array<std::array<uint8_t, 16>, 2> rtc_nvram{};
+    };
+
+    ConfigStateSnapshot capture_config_state() const {
+        ConfigStateSnapshot s;
+        s.model = static_cast<uint8_t>(model_);
+        s.a500_chip_512k = a500_chip_512k_ ? 1 : 0;
+        s.a600_chip_2mb = a600_chip_2mb_ ? 1 : 0;
+        s.fast_ram_configured = fast_ram_configured_ ? 1 : 0;
+        s.fast_ram_shut_up = fast_ram_shut_up_ ? 1 : 0;
+        s.fast_ram_base = fast_ram_base_;
+        s.gayle_id_shift = gayle_id_shift_;
+        s.gayle_status = gayle_status_;
+        s.gayle_intreq = gayle_intreq_;
+        s.gayle_intena = gayle_intena_;
+        s.gayle_cfg = gayle_cfg_;
+        s.ramsey_ctrl = ramsey_ctrl_;
+        s.gary_coldstart = gary_coldstart_;
+        s.gary_toenb = gary_toenb_;
+        s.gary_timeout = gary_timeout_;
+        s.buster_ctrl = buster_ctrl_;
+        s.rtc_ctrl_d = rtc_ctrl_d_;
+        s.rtc_ctrl_e = rtc_ctrl_e_;
+        s.rtc_ctrl_f = rtc_ctrl_f_;
+        s.rtc_24h = rtc_24h_ ? 1 : 0;
+        s.rtc_bank1 = rtc_bank1_;
+        s.rtc_nvram = rtc_nvram_;
+        return s;
+    }
+
+    void restore_config_state(const ConfigStateSnapshot& s) {
+        fast_ram_configured_ = s.fast_ram_configured != 0;
+        fast_ram_shut_up_ = s.fast_ram_shut_up != 0;
+        fast_ram_base_ = s.fast_ram_base;
+        gayle_id_shift_ = s.gayle_id_shift;
+        gayle_status_ = s.gayle_status;
+        gayle_intreq_ = s.gayle_intreq;
+        gayle_intena_ = s.gayle_intena;
+        gayle_cfg_ = s.gayle_cfg;
+        ramsey_ctrl_ = s.ramsey_ctrl;
+        gary_coldstart_ = s.gary_coldstart;
+        gary_toenb_ = s.gary_toenb;
+        gary_timeout_ = s.gary_timeout;
+        buster_ctrl_ = s.buster_ctrl;
+        rtc_ctrl_d_ = s.rtc_ctrl_d;
+        rtc_ctrl_e_ = s.rtc_ctrl_e;
+        rtc_ctrl_f_ = s.rtc_ctrl_f;
+        rtc_24h_ = s.rtc_24h != 0;
+        rtc_bank1_ = s.rtc_bank1;
+        rtc_nvram_ = s.rtc_nvram;
+    }
+
+    const std::vector<uint8_t>& chip_ram_vec() const { return chip_ram_; }
+    const std::vector<uint8_t>& slow_ram_vec() const { return slow_ram_; }
+    const std::vector<uint8_t>& mb_fast_ram_vec() const { return mb_fast_ram_; }
+    const std::vector<uint8_t>& fast_ram_vec() const { return fast_ram_; }
+    const std::vector<uint8_t>& rom_vec() const { return rom_; }
+    const std::vector<uint8_t>& ext_rom_vec() const { return ext_rom_; }
+    std::vector<uint8_t>& chip_ram_vec_mut() { return chip_ram_; }
+    std::vector<uint8_t>& slow_ram_vec_mut() { return slow_ram_; }
+    std::vector<uint8_t>& mb_fast_ram_vec_mut() { return mb_fast_ram_; }
+    std::vector<uint8_t>& fast_ram_vec_mut() { return fast_ram_; }
+
 private:
     uint8_t read_rom8(uint32_t offset) const;
     bool fast_ram_autoconfig_active() const {

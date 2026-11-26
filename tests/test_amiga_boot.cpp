@@ -699,6 +699,55 @@ void test_blitter_line_octants() {
     EXPECT_EQ((row5 & 0x3C00u) != 0, true);  // Moved left (-X) toward bits 2..5
 }
 
+void test_arf_snapshot_save_and_load() {
+    std::vector<uint8_t> rom(256 * 1024, 0);
+    // SSP = $00080000, PC = $00F80008
+    rom[0] = 0x00; rom[1] = 0x08; rom[2] = 0x00; rom[3] = 0x00;
+    rom[4] = 0x00; rom[5] = 0xF8; rom[6] = 0x00; rom[7] = 0x08;
+    // $F80008: BSET #0, $BFE201 (DDRA bit 0 = output), BCLR #0, $BFE001 (OVL = 0)
+    uint8_t code[] = {
+        0x08, 0xF9, 0x00, 0x00, 0x00, 0xBF, 0xE2, 0x01,
+        0x08, 0xB9, 0x00, 0x00, 0x00, 0xBF, 0xE0, 0x01,
+        0x4E, 0x71   // NOP
+    };
+    std::memcpy(&rom[8], code, sizeof(code));
+
+    amiga::Amiga500 src;
+    src.set_model(amiga::AmigaModel::A1200);
+    src.set_fast_ram_mb(4);
+    src.load_rom(rom.data(), rom.size());
+    src.reset();
+    src.step_instruction();  // DDRA bit 0 = output
+    src.step_instruction();  // Disable OVL
+
+    // Mutate CPU registers, Chip RAM, Custom palette, and floppy drive state
+    src.cpu().set_d(3, 0xCAFEBABEu);
+    src.cpu().set_a(2, 0x00045678u);
+    src.bus().write32(0x00012340u, 0xDEADBEEFu);
+    src.custom().write16(0x180u, 0x0F53u);  // COLOR00
+    src.floppy(1).set_enabled(true);
+    src.floppy(1).set_write_protected(true);
+
+    const std::string arf_path = "/tmp/ami_the_emu_test_snapshot.arf";
+    EXPECT_EQ(src.save_arf_file(arf_path), true);
+
+    // Load into a fresh machine configured with different defaults (A500, 0 Fast RAM)
+    amiga::Amiga500 dst;
+    dst.set_model(amiga::AmigaModel::A500);
+    EXPECT_EQ(dst.load_arf_file(arf_path), true);
+
+    EXPECT_EQ(static_cast<int>(dst.model()), static_cast<int>(amiga::AmigaModel::A1200));
+    EXPECT_EQ(dst.bus().fast_ram_mb(), 4u);
+    EXPECT_EQ(dst.cpu().d(3), 0xCAFEBABEu);
+    EXPECT_EQ(dst.cpu().a(2), 0x00045678u);
+    EXPECT_EQ(dst.cpu().pc(), src.cpu().pc());
+    EXPECT_EQ(dst.bus().read32(0x00012340u), 0xDEADBEEFu);
+    EXPECT_EQ(dst.custom().color(0), 0x0F53u);
+    EXPECT_EQ(dst.floppy(1).enabled(), true);
+    EXPECT_EQ(dst.floppy(1).write_protected(), true);
+    std::remove(arf_path.c_str());
+}
+
 }  // namespace
 
 int main() {
@@ -718,6 +767,7 @@ int main() {
     test_a600_ecs_and_memory_map();
     test_aga_bscan2_scan_doubling();
     test_blitter_line_octants();
+    test_arf_snapshot_save_and_load();
 
     if (g_failures == 0) {
         std::printf("All Amiga boot tests passed.\n");

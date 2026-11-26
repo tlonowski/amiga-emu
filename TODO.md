@@ -1,4 +1,4 @@
-# AmigaEmu — TODO
+# Ami the Emu — TODO
 
 ## Zgodność sprzętowa A500 / OCS
 - [x] **Emulacja *cycle-exact* magistrali i DMA:** podział wykonania instrukcji na cykle szyny oraz spowalnianie 68000 przez kradzież cykli DMA (bitplany, Copper, Blitter, Audio, Disk) — kluczowe dla wymagających dem scenowych i trików z wiązką w połowie linii.
@@ -30,3 +30,13 @@
 
 ## Kontrolery i urządzenia zewnętrzne
 - [x] **Portowanie joysticków z JoyPort do USB / Bluetooth:** obsługa fizycznych kontrolerów USB / Bluetooth (`GCController` / `IOHIDManager`) mapowanych na porty joysticka Amigi.
+
+## Nośniki i zabezpieczenia dyskietek
+- [ ] **Pełna obsługa zabezpieczeń zmiennej gęstości bitowej w obrazach `.scp` (*SuperCard Pro* / *Rob Northen Copylock*):** dokładne odwzorowanie pomiaru prędkości kątowej sektorów (`$8911` / `$8912` / `$8914`) przez rejestr `DSKBYTR` (`$DFF01A`) na drugiej dyskietce *Cannon Fodder 1* (`Cannon Fodder 1 B.scp`).
+
+## Kartridże rozszerzeń i narzędzia (Action Replay / Freezer)
+- [x] **Zrzuty stanu maszyny i pamięci (`.arf` — *Action Replay Freeze*) w katalogu `Saves`:** zapisywanie pełnego stanu procesora, pamięci RAM (Chip/Slow/Fast), układów CIA i Custom (Agnus/Denise/Lisa/Paula) oraz zamontowanych dyskietek `DF0:`–`DF3:` do pliku `.arf` (przycisk *Freeze* z ikoną śnieżynki / `Ctrl+S`), a także błyskawiczne wznawianie maszyny wraz z podłączeniem dyskietek po dwukliku na plik `.arf` w prawym panelu.
+- [x] **Monitor i trainer pamięci *Action Replay Mk III* (`MEM` / `Ctrl+E`):** zamrażanie maszyny w locie, podgląd rejestrów `680x0`, przeglądarka i edycja komórek pamięci RAM (`Chip RAM`, `Slow RAM`, `Fast RAM`) w Hex/ASCII oraz wyszukiwarka *Trainer* (`TS` / `T`) do znajdowania i modyfikacji liczby żyć, amunicji lub energii w grach.
+
+## Interfejs użytkownika (macOS)
+- [x] **Wyraźne podświetlenie ikon narzędzi w lewym panelu w momencie działania funkcji:** mocny kontrast, kolor i podświetlenie aktywnych przycisków (`Warp 12x`, `Joystick`, `Pełen ekran`, `Drukuj`, `Reset`) względem stanu spoczynku.

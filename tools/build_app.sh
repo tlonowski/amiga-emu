@@ -73,9 +73,9 @@ cat > "$CONTENTS_DIR/Info.plist" <<EOF
 <plist version="1.0">
 <dict>
     <key>CFBundleName</key>
-    <string>AmigaEmu</string>
+    <string>Ami the Emu</string>
     <key>CFBundleDisplayName</key>
-    <string>AmigaEmu</string>
+    <string>Ami the Emu</string>
     <key>CFBundleIdentifier</key>
     <string>local.tomasz.amigaemu</string>
     <key>CFBundleVersion</key>

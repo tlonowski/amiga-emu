@@ -65,6 +65,8 @@ public:
     GayleIde& gayle_ide() { return gayle_ide_; }
     const GayleIde& gayle_ide() const { return gayle_ide_; }
     uint32_t led_state() const;
+    bool save_arf_file(const std::string& path) const;
+    bool load_arf_file(const std::string& path);
 
 private:
     AmigaModel model_ = AmigaModel::A500;

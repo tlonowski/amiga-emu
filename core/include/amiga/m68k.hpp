@@ -77,6 +77,103 @@ public:
     uint64_t total_cycles() const { return total_cycles_; }
     bool halted() const { return halted_; }
 
+    struct StateSnapshot {
+        uint8_t cpu_model = 0;
+        std::array<uint32_t, 8> d{};
+        std::array<uint32_t, 8> a{};
+        uint32_t usp = 0;
+        uint32_t ssp = 0;
+        uint32_t vbr = 0;
+        uint32_t cacr = 0;
+        uint32_t caar = 0;
+        uint32_t sfc = 0;
+        uint32_t dfc = 0;
+        uint32_t mmu_tc = 0;
+        uint64_t mmu_crp = 0;
+        uint64_t mmu_srp = 0;
+        uint32_t mmu_tt0 = 0;
+        uint32_t mmu_tt1 = 0;
+        uint16_t mmu_sr = 0;
+        std::array<double, 8> fp{};
+        uint32_t fpcr = 0;
+        uint32_t fpsr = 0;
+        uint32_t fpiar = 0;
+        uint8_t fpu_initialized = 0;
+        uint32_t pc = 0;
+        uint32_t instr_pc = 0;
+        uint16_t sr = 0x2700;
+        uint64_t total_cycles = 0;
+        uint8_t pending_ipl = 0;
+        uint8_t halted = 0;
+        uint8_t exception_taken = 0;
+    };
+
+    StateSnapshot capture_state() const {
+        StateSnapshot s;
+        s.cpu_model = static_cast<uint8_t>(cpu_model_);
+        s.d = d_;
+        s.a = a_;
+        s.usp = usp_;
+        s.ssp = ssp_;
+        s.vbr = vbr_;
+        s.cacr = cacr_;
+        s.caar = caar_;
+        s.sfc = sfc_;
+        s.dfc = dfc_;
+        s.mmu_tc = mmu_tc_;
+        s.mmu_crp = mmu_crp_;
+        s.mmu_srp = mmu_srp_;
+        s.mmu_tt0 = mmu_tt0_;
+        s.mmu_tt1 = mmu_tt1_;
+        s.mmu_sr = mmu_sr_;
+        s.fp = fp_;
+        s.fpcr = fpcr_;
+        s.fpsr = fpsr_;
+        s.fpiar = fpiar_;
+        s.fpu_initialized = fpu_initialized_ ? 1 : 0;
+        s.pc = pc_;
+        s.instr_pc = instr_pc_;
+        s.sr = sr_;
+        s.total_cycles = total_cycles_;
+        s.pending_ipl = pending_ipl_;
+        s.halted = halted_ ? 1 : 0;
+        s.exception_taken = exception_taken_ ? 1 : 0;
+        return s;
+    }
+
+    void restore_state(const StateSnapshot& s) {
+        cpu_model_ = static_cast<CpuModel>(s.cpu_model);
+        d_ = s.d;
+        a_ = s.a;
+        usp_ = s.usp;
+        ssp_ = s.ssp;
+        vbr_ = s.vbr;
+        cacr_ = s.cacr;
+        caar_ = s.caar;
+        sfc_ = s.sfc;
+        dfc_ = s.dfc;
+        mmu_tc_ = s.mmu_tc;
+        mmu_crp_ = s.mmu_crp;
+        mmu_srp_ = s.mmu_srp;
+        mmu_tt0_ = s.mmu_tt0;
+        mmu_tt1_ = s.mmu_tt1;
+        mmu_sr_ = s.mmu_sr;
+        fp_ = s.fp;
+        fpcr_ = s.fpcr;
+        fpsr_ = s.fpsr;
+        fpiar_ = s.fpiar;
+        fpu_initialized_ = s.fpu_initialized != 0;
+        pc_ = s.pc;
+        instr_pc_ = s.instr_pc;
+        sr_ = s.sr;
+        total_cycles_ = s.total_cycles;
+        pending_ipl_ = s.pending_ipl;
+        halted_ = s.halted != 0;
+        exception_taken_ = s.exception_taken != 0;
+        invalidate_icache();
+        invalidate_dcache();
+    }
+
 private:
     struct ResolvedEA {
         enum class Kind : uint8_t { DataReg, AddrReg, Memory, Immediate };

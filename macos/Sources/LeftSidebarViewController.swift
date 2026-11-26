@@ -1,11 +1,13 @@
 import AppKit
 
 enum SidebarTool: Int {
-    case reset, warp, joystick, print, fullScreen
+    case reset, freeze, warp, joystick, print, fullScreen
 }
 
 protocol LeftSidebarDelegate: AnyObject {
     func sidebarDidRequestTool(_ tool: SidebarTool)
+    func sidebarDidChangeSlomo(enabled: Bool, factor: Double)
+    func sidebarDidRequestActionReplayMonitor()
     func sidebarDidSelectModel(_ model: AmigaModelType)
     func sidebarDidRequestRomPick(for profile: AmigaProfileConfig)
     func sidebarDidRequestInsertFloppy(unit: Int, for profile: AmigaProfileConfig)
@@ -23,6 +25,345 @@ protocol LeftSidebarDelegate: AnyObject {
     func sidebarDidRequestApplyAndReset(profile: AmigaProfileConfig)
 }
 
+/// Custom Action Replay Mk III "SLOMO" rotary potentiometer knob + metallic toggle switch + red ACTIVE LED + red FREEZE button.
+final class ActionReplaySlomoView: NSView {
+    var onChanged: ((Bool, Double) -> Void)?
+    var onFreezeMonitorRequested: (() -> Void)?
+
+    private final class RotaryKnobControl: NSControl {
+        /// Normalized knob value 0.0 ("-" minimum slow) ... 1.0 ("+" maximum slow)
+        var doubleValueNormalized: Double = 0.5 {
+            didSet {
+                doubleValueNormalized = min(max(doubleValueNormalized, 0.0), 1.0)
+                needsDisplay = true
+            }
+        }
+        private var dragStartY: CGFloat = 0
+        private var dragStartVal: Double = 0.5
+
+        override var intrinsicContentSize: NSSize { NSSize(width: 24, height: 24) }
+
+        override func mouseDown(with event: NSEvent) {
+            dragStartY = event.locationInWindow.y
+            dragStartVal = doubleValueNormalized
+            let pt = convert(event.locationInWindow, from: nil)
+            let cx = bounds.midX
+            let cy = bounds.midY
+            let dx = Double(pt.x - cx)
+            let dy = Double(pt.y - cy)
+            if hypot(dx, dy) > 4.0 {
+                // Map angle around center to 0..1 (from +135 deg top-left "-" to -135 deg bottom/right "+")
+                let deg = atan2(dx, dy) * 180.0 / .pi // 0 at top, -135 at bottom-left, +135 at bottom-right
+                let clamped = min(max(deg, -135.0), 135.0)
+                doubleValueNormalized = (clamped + 135.0) / 270.0
+                sendAction(action, to: target)
+            }
+        }
+
+        override func mouseDragged(with event: NSEvent) {
+            let dy = Double(event.locationInWindow.y - dragStartY)
+            doubleValueNormalized = dragStartVal + dy / 70.0
+            sendAction(action, to: target)
+        }
+
+        override func scrollWheel(with event: NSEvent) {
+            let delta = Double(event.scrollingDeltaY) * (event.hasPreciseScrollingDeltas ? 0.004 : 0.04)
+            doubleValueNormalized += delta
+            sendAction(action, to: target)
+        }
+
+        override func draw(_ dirtyRect: NSRect) {
+            guard let ctx = NSGraphicsContext.current?.cgContext else { return }
+            let cx = bounds.midX
+            let cy = bounds.midY
+            let r: CGFloat = 8.5
+
+            // Tick marks around knob
+            ctx.saveGState()
+            for i in 0...6 {
+                let frac = Double(i) / 6.0
+                let angle = (-135.0 + frac * 270.0) * .pi / 180.0
+                let sinA = CGFloat(sin(angle))
+                let cosA = CGFloat(cos(angle))
+                let r1 = r + 1.8
+                let r2 = r + 3.4
+                ctx.move(to: CGPoint(x: cx + sinA * r1, y: cy + cosA * r1))
+                ctx.addLine(to: CGPoint(x: cx + sinA * r2, y: cy + cosA * r2))
+            }
+            ctx.setStrokeColor(MonokaiTheme.muted.withAlphaComponent(0.75).cgColor)
+            ctx.setLineWidth(1.1)
+            ctx.strokePath()
+            ctx.restoreGState()
+
+            // Outer knurled black body
+            let bodyRect = NSRect(x: cx - r, y: cy - r, width: r * 2, height: r * 2)
+            ctx.saveGState()
+            ctx.setShadow(offset: CGSize(width: 0, height: -1), blur: 2.5, color: NSColor.black.withAlphaComponent(0.7).cgColor)
+            ctx.setFillColor(NSColor(calibratedWhite: 0.14, alpha: 1.0).cgColor)
+            ctx.fillEllipse(in: bodyRect)
+            ctx.restoreGState()
+
+            ctx.setStrokeColor(NSColor(calibratedWhite: 0.35, alpha: 1.0).cgColor)
+            ctx.setLineWidth(1.2)
+            ctx.strokeEllipse(in: bodyRect.insetBy(dx: 0.6, dy: 0.6))
+
+            // Inner cap
+            let capRect = bodyRect.insetBy(dx: 2.4, dy: 2.4)
+            ctx.setFillColor(NSColor(calibratedWhite: 0.20, alpha: 1.0).cgColor)
+            ctx.fillEllipse(in: capRect)
+
+            // White pointer line
+            let angle = (-135.0 + doubleValueNormalized * 270.0) * .pi / 180.0
+            let sinA = CGFloat(sin(angle))
+            let cosA = CGFloat(cos(angle))
+            ctx.setStrokeColor(MonokaiTheme.orange.cgColor)
+            ctx.setLineWidth(1.8)
+            ctx.setLineCap(.round)
+            ctx.move(to: CGPoint(x: cx + sinA * 1.5, y: cy + cosA * 1.5))
+            ctx.addLine(to: CGPoint(x: cx + sinA * (r - 1.8), y: cy + cosA * (r - 1.8)))
+            ctx.strokePath()
+        }
+    }
+
+    private final class ToggleSwitchControl: NSControl {
+        var isOn: Bool = false {
+            didSet { needsDisplay = true }
+        }
+
+        override var intrinsicContentSize: NSSize { NSSize(width: 28, height: 18) }
+
+        override func mouseDown(with event: NSEvent) {
+            isOn.toggle()
+            sendAction(action, to: target)
+        }
+
+        override func draw(_ dirtyRect: NSRect) {
+            guard let ctx = NSGraphicsContext.current?.cgContext else { return }
+            let cx = bounds.midX
+            let cy = bounds.midY
+
+            // Metallic hex bushing / washer
+            let washerRect = NSRect(x: cx - 7, y: cy - 7, width: 14, height: 14)
+            ctx.setFillColor(NSColor(calibratedWhite: 0.48, alpha: 1.0).cgColor)
+            ctx.fillEllipse(in: washerRect)
+            ctx.setStrokeColor(NSColor(calibratedWhite: 0.72, alpha: 1.0).cgColor)
+            ctx.setLineWidth(1.1)
+            ctx.strokeEllipse(in: washerRect.insetBy(dx: 0.5, dy: 0.5))
+
+            // Inner dark hole
+            let holeRect = NSRect(x: cx - 3.5, y: cy - 3.5, width: 7, height: 7)
+            ctx.setFillColor(NSColor(calibratedWhite: 0.12, alpha: 1.0).cgColor)
+            ctx.fillEllipse(in: holeRect)
+
+            // Chrome toggle bat (bat points right/up when ON, left/down when OFF)
+            let tipX: CGFloat = isOn ? (cx + 8.0) : (cx - 8.0)
+            let tipY: CGFloat = isOn ? (cy + 2.5) : (cy - 1.5)
+            ctx.saveGState()
+            ctx.setShadow(offset: CGSize(width: 0, height: -1), blur: 2.0, color: NSColor.black.withAlphaComponent(0.75).cgColor)
+            ctx.setStrokeColor(isOn ? NSColor(calibratedWhite: 0.92, alpha: 1.0).cgColor : NSColor(calibratedWhite: 0.68, alpha: 1.0).cgColor)
+            ctx.setLineWidth(3.8)
+            ctx.setLineCap(.round)
+            ctx.move(to: CGPoint(x: cx, y: cy))
+            ctx.addLine(to: CGPoint(x: tipX, y: tipY))
+            ctx.strokePath()
+
+            // Highlight on bat tip
+            ctx.setFillColor(NSColor.white.cgColor)
+            ctx.fillEllipse(in: NSRect(x: tipX - 1.6, y: tipY - 1.6, width: 3.2, height: 3.2))
+            ctx.restoreGState()
+        }
+    }
+
+    private let knob = RotaryKnobControl()
+    private let toggleSwitch = ToggleSwitchControl()
+    private let ledView = NSView()
+    private let titleLabel = NSTextField(labelWithString: "SLOMO")
+    private let onLabel = NSTextField(labelWithString: "ON")
+    private let activeLabel = NSTextField(labelWithString: "ACTIVE")
+    private let pctLabel = NSTextField(labelWithString: "50%")
+    private let monitorBtn = NSButton()
+
+    var isSlomoOn: Bool {
+        get { toggleSwitch.isOn }
+        set {
+            toggleSwitch.isOn = newValue
+            updateVisuals()
+        }
+    }
+
+    /// Slowdown speed multiplier in 0.10 (10% speed at max "+") ... 0.85 (85% speed at min "-")
+    var speedMultiplier: Double {
+        let v = knob.doubleValueNormalized
+        return max(0.08, 0.85 - v * 0.75)
+    }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        setup()
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    private func setup() {
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.white.withAlphaComponent(0.04).cgColor
+        layer?.borderColor = MonokaiTheme.border.cgColor
+        layer?.borderWidth = 1.0
+        layer?.cornerRadius = 6
+
+        let minusLbl = NSTextField(labelWithString: "−")
+        minusLbl.font = .systemFont(ofSize: 10, weight: .bold)
+        minusLbl.textColor = MonokaiTheme.muted
+        minusLbl.translatesAutoresizingMaskIntoConstraints = false
+
+        let plusLbl = NSTextField(labelWithString: "+")
+        plusLbl.font = .systemFont(ofSize: 10, weight: .bold)
+        plusLbl.textColor = MonokaiTheme.muted
+        plusLbl.translatesAutoresizingMaskIntoConstraints = false
+
+        knob.target = self
+        knob.action = #selector(knobChanged)
+        knob.toolTip = L10n.t("Pokrętło Action Replay SLOMO: regulacja spowolnienia (przeciągnij lub kręć kółkiem myszy)", "Action Replay SLOMO knob: adjust slowdown level (drag or scroll mouse wheel)")
+        knob.translatesAutoresizingMaskIntoConstraints = false
+
+        toggleSwitch.target = self
+        toggleSwitch.action = #selector(switchToggled)
+        toggleSwitch.toolTip = L10n.t("Przełącznik Action Replay SLOMO ON/OFF (Ctrl+G)", "Action Replay SLOMO ON/OFF toggle switch (Ctrl+G)")
+        toggleSwitch.translatesAutoresizingMaskIntoConstraints = false
+
+        onLabel.font = .systemFont(ofSize: 9, weight: .bold)
+        onLabel.textColor = MonokaiTheme.muted
+        onLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        ledView.wantsLayer = true
+        ledView.layer?.cornerRadius = 4.5
+        ledView.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            ledView.widthAnchor.constraint(equalToConstant: 9),
+            ledView.heightAnchor.constraint(equalToConstant: 9)
+        ])
+
+        activeLabel.font = .systemFont(ofSize: 9, weight: .bold)
+        activeLabel.textColor = MonokaiTheme.muted
+        activeLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        titleLabel.font = .systemFont(ofSize: 10, weight: .heavy)
+        titleLabel.textColor = MonokaiTheme.text
+        titleLabel.wantsLayer = true
+        titleLabel.layer?.borderColor = MonokaiTheme.border.cgColor
+        titleLabel.layer?.borderWidth = 1.0
+        titleLabel.layer?.cornerRadius = 3
+        titleLabel.alignment = .center
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        pctLabel.font = .monospacedDigitSystemFont(ofSize: 10, weight: .semibold)
+        pctLabel.textColor = MonokaiTheme.muted
+        pctLabel.alignment = .right
+        pctLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        monitorBtn.title = "MEM"
+        monitorBtn.font = .systemFont(ofSize: 9.5, weight: .heavy)
+        monitorBtn.bezelStyle = . texturedRounded
+        monitorBtn.isBordered = false
+        monitorBtn.wantsLayer = true
+        monitorBtn.layer?.backgroundColor = NSColor(red: 0.88, green: 0.18, blue: 0.22, alpha: 0.25).cgColor
+        monitorBtn.layer?.borderColor = NSColor(red: 1.0, green: 0.24, blue: 0.28, alpha: 0.85).cgColor
+        monitorBtn.layer?.borderWidth = 1.0
+        monitorBtn.layer?.cornerRadius = 4
+        monitorBtn.contentTintColor = NSColor(red: 1.0, green: 0.35, blue: 0.38, alpha: 1.0)
+        monitorBtn.toolTip = L10n.t("Action Replay Mk III Freeze Monitor — podgląd, wyszukiwarka (Trainer) i edycja pamięci RAM (Ctrl+E)", "Action Replay Mk III Freeze Monitor — inspect, search (Trainer) & edit RAM (Ctrl+E)")
+        monitorBtn.target = self
+        monitorBtn.action = #selector(monitorClicked)
+        monitorBtn.translatesAutoresizingMaskIntoConstraints = false
+
+        for v in [minusLbl, knob, plusLbl, toggleSwitch, onLabel, ledView, activeLabel, titleLabel, pctLabel, monitorBtn] {
+            addSubview(v)
+        }
+
+        NSLayoutConstraint.activate([
+            heightAnchor.constraint(equalToConstant: 30),
+
+            minusLbl.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
+            minusLbl.centerYAnchor.constraint(equalTo: centerYAnchor),
+
+            knob.leadingAnchor.constraint(equalTo: minusLbl.trailingAnchor, constant: 1),
+            knob.centerYAnchor.constraint(equalTo: centerYAnchor),
+            knob.widthAnchor.constraint(equalToConstant: 22),
+            knob.heightAnchor.constraint(equalToConstant: 22),
+
+            plusLbl.leadingAnchor.constraint(equalTo: knob.trailingAnchor, constant: 1),
+            plusLbl.centerYAnchor.constraint(equalTo: centerYAnchor),
+
+            toggleSwitch.leadingAnchor.constraint(equalTo: plusLbl.trailingAnchor, constant: 5),
+            toggleSwitch.centerYAnchor.constraint(equalTo: centerYAnchor),
+            toggleSwitch.widthAnchor.constraint(equalToConstant: 24),
+            toggleSwitch.heightAnchor.constraint(equalToConstant: 18),
+
+            onLabel.leadingAnchor.constraint(equalTo: toggleSwitch.trailingAnchor, constant: 2),
+            onLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+
+            ledView.leadingAnchor.constraint(equalTo: onLabel.trailingAnchor, constant: 5),
+            ledView.centerYAnchor.constraint(equalTo: centerYAnchor),
+
+            activeLabel.leadingAnchor.constraint(equalTo: ledView.trailingAnchor, constant: 3),
+            activeLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+
+            titleLabel.leadingAnchor.constraint(equalTo: activeLabel.trailingAnchor, constant: 5),
+            titleLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+            titleLabel.widthAnchor.constraint(equalToConstant: 42),
+
+            pctLabel.leadingAnchor.constraint(equalTo: titleLabel.trailingAnchor, constant: 4),
+            pctLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+
+            monitorBtn.leadingAnchor.constraint(greaterThanOrEqualTo: pctLabel.trailingAnchor, constant: 4),
+            monitorBtn.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
+            monitorBtn.centerYAnchor.constraint(equalTo: centerYAnchor),
+            monitorBtn.widthAnchor.constraint(equalToConstant: 34),
+            monitorBtn.heightAnchor.constraint(equalToConstant: 20)
+        ])
+
+        updateVisuals()
+    }
+
+    @objc private func knobChanged() {
+        updateVisuals()
+        onChanged?(toggleSwitch.isOn, speedMultiplier)
+    }
+
+    @objc private func switchToggled() {
+        updateVisuals()
+        onChanged?(toggleSwitch.isOn, speedMultiplier)
+    }
+
+    @objc private func monitorClicked() {
+        onFreezeMonitorRequested?()
+    }
+
+    private func updateVisuals() {
+        let on = toggleSwitch.isOn
+        let pct = Int((speedMultiplier * 100.0).rounded())
+        pctLabel.stringValue = "\(pct)%"
+
+        let redOn = NSColor(red: 1.0, green: 0.18, blue: 0.22, alpha: 1.0)
+        let redOff = NSColor(red: 0.24, green: 0.08, blue: 0.10, alpha: 1.0)
+        ledView.layer?.backgroundColor = (on ? redOn : redOff).cgColor
+        ledView.layer?.shadowColor = on ? redOn.cgColor : nil
+        ledView.layer?.shadowOffset = .zero
+        ledView.layer?.shadowRadius = on ? 5.0 : 0.0
+        ledView.layer?.shadowOpacity = on ? 0.95 : 0.0
+
+        onLabel.textColor = on ? MonokaiTheme.text : MonokaiTheme.muted
+        activeLabel.textColor = on ? redOn : MonokaiTheme.muted
+        pctLabel.textColor = on ? MonokaiTheme.orange : MonokaiTheme.muted
+        titleLabel.textColor = on ? redOn : MonokaiTheme.text
+        titleLabel.layer?.borderColor = (on ? redOn.withAlphaComponent(0.8) : MonokaiTheme.border).cgColor
+        layer?.borderColor = (on ? redOn.withAlphaComponent(0.75) : MonokaiTheme.border).cgColor
+        layer?.backgroundColor = (on ? redOn.withAlphaComponent(0.12) : NSColor.white.withAlphaComponent(0.04)).cgColor
+    }
+}
+
 final class LeftSidebarViewController: NSViewController, NSTableViewDataSource, NSTableViewDelegate {
     weak var delegate: LeftSidebarDelegate?
 
@@ -35,30 +376,100 @@ final class LeftSidebarViewController: NSViewController, NSTableViewDataSource, 
     private var titleLabel: NSTextField!
     private var hwHeaderLabel: NSTextField!
     private var applyBtn: NSButton!
+    private var resetToolBtn: NSButton!
+    private var freezeToolBtn: NSButton!
     private var warpToolBtn: NSButton!
     private var joyToolBtn: NSButton!
+    private var printToolBtn: NSButton!
+    private var fullToolBtn: NSButton!
     private let toolsRow = NSStackView()
+    private let slomoRow = ActionReplaySlomoView()
     private var floppyIconViews: [Int: NSImageView] = [:]
     private var floppyLedViews: [Int: NSView] = [:]
     private var hdIconViews: [NSImageView] = []
     private var hdLedViews: [NSView] = []
     private var lastLedState: UInt32 = 0xFFFF_FFFF
+    private var currentWarpState = false
+    private var currentJoystickState = false
+    private var currentFullScreenState = false
 
     func configure(profiles: [AmigaModelType: AmigaProfileConfig], selected: AmigaModelType) {
         self.profiles = profiles
         self.selectedModel = selected
         reloadUI()
+        setToolStates(warp: currentWarpState, joystick: currentJoystickState, fullScreen: currentFullScreenState)
     }
 
     func updateSelected(_ model: AmigaModelType) {
         self.selectedModel = model
         reloadUI()
+        setToolStates(warp: currentWarpState, joystick: currentJoystickState, fullScreen: currentFullScreenState)
     }
 
-    func setToolStates(warp: Bool, joystick: Bool) {
+    func setToolStates(warp: Bool, joystick: Bool, fullScreen: Bool = false, slomo: Bool? = nil) {
+        currentWarpState = warp
+        currentJoystickState = joystick
+        currentFullScreenState = fullScreen
+        if let slomo = slomo {
+            slomoRow.isSlomoOn = slomo
+        }
         guard isViewLoaded else { return }
         warpToolBtn?.state = warp ? .on : .off
         joyToolBtn?.state = joystick ? .on : .off
+        fullToolBtn?.state = fullScreen ? .on : .off
+        applyToolButtonStyle(warpToolBtn, active: warp, activeColor: MonokaiTheme.orange)
+        applyToolButtonStyle(joyToolBtn, active: joystick, activeColor: MonokaiTheme.green)
+        applyToolButtonStyle(fullToolBtn, active: fullScreen, activeColor: MonokaiTheme.cyan)
+    }
+
+    var slomoSpeedMultiplier: Double {
+        return slomoRow.speedMultiplier
+    }
+
+    func flashTool(_ tool: SidebarTool) {
+        guard isViewLoaded else { return }
+        switch tool {
+        case .reset:
+            if let b = resetToolBtn { flashMomentaryToolButton(b, color: MonokaiTheme.yellow) }
+        case .freeze:
+            if let b = freezeToolBtn { flashMomentaryToolButton(b, color: MonokaiTheme.pink) }
+        case .print:
+            if let b = printToolBtn { flashMomentaryToolButton(b, color: MonokaiTheme.cyan) }
+        default:
+            break
+        }
+    }
+
+    private func applyToolButtonStyle(_ button: NSButton?, active: Bool, activeColor: NSColor) {
+        guard let b = button else { return }
+        b.wantsLayer = true
+        if active {
+            b.contentTintColor = activeColor
+            b.alphaValue = 1.0
+            b.layer?.backgroundColor = activeColor.withAlphaComponent(0.22).cgColor
+            b.layer?.borderColor = activeColor.withAlphaComponent(0.85).cgColor
+            b.layer?.borderWidth = 1.2
+            b.layer?.cornerRadius = 6
+            b.layer?.shadowColor = activeColor.cgColor
+            b.layer?.shadowOffset = .zero
+            b.layer?.shadowRadius = 5.0
+            b.layer?.shadowOpacity = 0.85
+        } else {
+            b.contentTintColor = MonokaiTheme.muted
+            b.alphaValue = 0.72
+            b.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.04).cgColor
+            b.layer?.borderColor = MonokaiTheme.border.cgColor
+            b.layer?.borderWidth = 1.0
+            b.layer?.cornerRadius = 6
+            b.layer?.shadowOpacity = 0.0
+        }
+    }
+
+    private func flashMomentaryToolButton(_ button: NSButton, color: NSColor) {
+        applyToolButtonStyle(button, active: true, activeColor: color)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self, weak button] in
+            self?.applyToolButtonStyle(button, active: false, activeColor: color)
+        }
     }
 
     @objc private func onToolClicked(_ sender: NSButton) {
@@ -120,6 +531,12 @@ final class LeftSidebarViewController: NSViewController, NSTableViewDataSource, 
         titleLabel?.stringValue = L10n.t("MASZYNY AMIGA", "AMIGA MACHINES")
         hwHeaderLabel?.stringValue = L10n.t("KONFIGURACJA SPRZĘTU", "HARDWARE CONFIGURATION")
         applyBtn?.title = L10n.t("Restartuj maszynę", "Restart Machine")
+        resetToolBtn?.toolTip = L10n.t("Reset Amigi (Ctrl+R)", "Reset Amiga (Ctrl+R)")
+        freezeToolBtn?.toolTip = L10n.t("Zamroź i zapisz stan maszyny (.arf) do Saves (Ctrl+S)", "Freeze & Save machine state (.arf) to Saves (Ctrl+S)")
+        warpToolBtn?.toolTip = L10n.t("Tryb Warp 12x (Ctrl+T)", "Warp 12x mode (Ctrl+T)")
+        joyToolBtn?.toolTip = L10n.t("Joystick na strzałkach + Shift (Ctrl+J)", "Arrow keys + Shift Joystick (Ctrl+J)")
+        printToolBtn?.toolTip = L10n.t("Drukuj wydruk z Amigi (Ctrl+P)", "Print Amiga output (Ctrl+P)")
+        fullToolBtn?.toolTip = L10n.t("Pełen ekran (Ctrl+F)", "Full Screen (Ctrl+F)")
         modelTable.reloadData()
         if let idx = AmigaModelType.allCases.firstIndex(of: selectedModel) {
             modelTable.selectRowIndexes(IndexSet(integer: idx), byExtendingSelection: false)
@@ -175,27 +592,41 @@ final class LeftSidebarViewController: NSViewController, NSTableViewDataSource, 
 
         func makeToolButton(_ symbol: String, _ tip: String, _ tool: SidebarTool, toggle: Bool) -> NSButton {
             let b = NSButton()
-            b.image = NSImage(systemSymbolName: symbol, accessibilityDescription: tip)
+            let cfg = NSImage.SymbolConfiguration(pointSize: 13, weight: .semibold)
+            b.image = NSImage(systemSymbolName: symbol, accessibilityDescription: tip)?.withSymbolConfiguration(cfg)
             b.imagePosition = .imageOnly
             b.bezelStyle = .texturedRounded
+            b.isBordered = false
             b.setButtonType(toggle ? .pushOnPushOff : .momentaryPushIn)
             b.toolTip = tip
             b.tag = tool.rawValue
             b.target = self
             b.action = #selector(onToolClicked(_:))
+            b.translatesAutoresizingMaskIntoConstraints = false
+            b.heightAnchor.constraint(equalToConstant: 26).isActive = true
+            applyToolButtonStyle(b, active: false, activeColor: MonokaiTheme.cyan)
             return b
         }
-        let resetBtn = makeToolButton("arrow.clockwise", L10n.t("Reset Amigi (Cmd+R)", "Reset Amiga (Cmd+R)"), .reset, toggle: false)
-        warpToolBtn = makeToolButton("hare", L10n.t("Tryb Warp 12x (Cmd+T)", "Warp 12x mode (Cmd+T)"), .warp, toggle: true)
-        joyToolBtn = makeToolButton("gamecontroller", L10n.t("Joystick na strzałkach + Shift (Cmd+J)", "Arrow keys + Shift Joystick (Cmd+J)"), .joystick, toggle: true)
-        let printBtn = makeToolButton("printer", L10n.t("Drukuj wydruk z Amigi (Cmd+P)", "Print Amiga output (Cmd+P)"), .print, toggle: false)
-        let fullBtn = makeToolButton("arrow.up.left.and.arrow.down.right", L10n.t("Pełen ekran (Cmd+F)", "Full Screen (Cmd+F)"), .fullScreen, toggle: false)
+        resetToolBtn = makeToolButton("arrow.clockwise", L10n.t("Reset Amigi (Ctrl+R)", "Reset Amiga (Ctrl+R)"), .reset, toggle: false)
+        freezeToolBtn = makeToolButton("snowflake", L10n.t("Zamroź i zapisz stan maszyny (.arf) do Saves (Ctrl+S)", "Freeze & Save machine state (.arf) to Saves (Ctrl+S)"), .freeze, toggle: false)
+        warpToolBtn = makeToolButton("hare", L10n.t("Tryb Warp 12x (Ctrl+T)", "Warp 12x mode (Ctrl+T)"), .warp, toggle: true)
+        joyToolBtn = makeToolButton("gamecontroller", L10n.t("Joystick na strzałkach + Shift (Ctrl+J)", "Arrow keys + Shift Joystick (Ctrl+J)"), .joystick, toggle: true)
+        printToolBtn = makeToolButton("printer", L10n.t("Drukuj wydruk z Amigi (Ctrl+P)", "Print Amiga output (Ctrl+P)"), .print, toggle: false)
+        fullToolBtn = makeToolButton("arrow.up.left.and.arrow.down.right", L10n.t("Pełen ekran (Ctrl+F)", "Full Screen (Ctrl+F)"), .fullScreen, toggle: false)
         toolsRow.orientation = .horizontal
         toolsRow.distribution = .fillEqually
         toolsRow.spacing = 6
         toolsRow.translatesAutoresizingMaskIntoConstraints = false
-        for b in [resetBtn, warpToolBtn!, joyToolBtn!, printBtn, fullBtn] {
+        for b in [resetToolBtn!, freezeToolBtn!, warpToolBtn!, joyToolBtn!, printToolBtn!, fullToolBtn!] {
             toolsRow.addArrangedSubview(b)
+        }
+
+        slomoRow.translatesAutoresizingMaskIntoConstraints = false
+        slomoRow.onChanged = { [weak self] enabled, factor in
+            self?.delegate?.sidebarDidChangeSlomo(enabled: enabled, factor: factor)
+        }
+        slomoRow.onFreezeMonitorRequested = { [weak self] in
+            self?.delegate?.sidebarDidRequestActionReplayMonitor()
         }
 
         root.addSubview(titleLabel)
@@ -203,12 +634,17 @@ final class LeftSidebarViewController: NSViewController, NSTableViewDataSource, 
         root.addSubview(divider)
         root.addSubview(scrollView)
         root.addSubview(toolsRow)
+        root.addSubview(slomoRow)
         root.addSubview(applyBtn)
 
         NSLayoutConstraint.activate([
             toolsRow.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 12),
             toolsRow.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -12),
             toolsRow.topAnchor.constraint(equalTo: divider.bottomAnchor, constant: 10),
+
+            slomoRow.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 12),
+            slomoRow.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -12),
+            slomoRow.topAnchor.constraint(equalTo: toolsRow.bottomAnchor, constant: 6),
 
             titleLabel.topAnchor.constraint(equalTo: root.safeAreaLayoutGuide.topAnchor, constant: 10),
             titleLabel.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 14),
@@ -223,7 +659,7 @@ final class LeftSidebarViewController: NSViewController, NSTableViewDataSource, 
             divider.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 10),
             divider.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -10),
 
-            scrollView.topAnchor.constraint(equalTo: toolsRow.bottomAnchor, constant: 8),
+            scrollView.topAnchor.constraint(equalTo: slomoRow.bottomAnchor, constant: 8),
             scrollView.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             scrollView.bottomAnchor.constraint(equalTo: applyBtn.topAnchor, constant: -8),
@@ -238,6 +674,7 @@ final class LeftSidebarViewController: NSViewController, NSTableViewDataSource, 
         ])
 
         reloadUI()
+        setToolStates(warp: currentWarpState, joystick: currentJoystickState, fullScreen: currentFullScreenState)
     }
 
     private func makeSectionHeader(_ text: String) -> NSTextField {

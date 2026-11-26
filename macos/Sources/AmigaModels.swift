@@ -217,13 +217,21 @@ enum AmigaPaths {
 
     static func ensureDirectoryStructure() {
         let fm = FileManager.default
-        let subdirs = ["Kickstart", "adf", "Hard Drives"]
+        let subdirs = ["Kickstart", "adf", "adf/Saves", "Saves", "Hard Drives"]
         for sub in subdirs {
             let url = URL(fileURLWithPath: appRoot).appendingPathComponent(sub, isDirectory: true)
             if !fm.fileExists(atPath: url.path) {
                 try? fm.createDirectory(at: url, withIntermediateDirectories: true)
             }
         }
+    }
+
+    static var savesDirectoryPath: String {
+        let adfSaves = appRoot + "/adf/Saves"
+        if FileManager.default.fileExists(atPath: adfSaves) {
+            return adfSaves
+        }
+        return appRoot + "/Saves"
     }
 
     static func preferredDirectory(subpath: String) -> URL {
@@ -253,16 +261,38 @@ enum DiskLibrary {
         }
 
         var items: [DiskImageItem] = []
+        var seenPaths = Set<String>()
         for case let fileURL as URL in enumerator {
-            guard fileURL.pathExtension.lowercased() == "adf" else { continue }
+            let ext = fileURL.pathExtension.lowercased()
+            guard ext == "adf" || ext == "scp" || ext == "arf" else { continue }
+            seenPaths.insert(fileURL.path)
             let rel = fileURL.path.replacingOccurrences(of: rootPath + "/", with: "")
             let parts = rel.split(separator: "/")
-            let category = parts.count > 1 ? String(parts[0]) : "Inne"
+            let category = parts.count > 1 ? String(parts[0]) : (ext == "arf" ? "Saves" : "Inne")
             items.append(DiskImageItem(
                 name: fileURL.deletingPathExtension().lastPathComponent,
                 category: category,
                 path: fileURL.path
             ))
+        }
+        for extraSaves in [AmigaPaths.appRoot + "/Saves", AmigaPaths.appRoot + "/saves"] {
+            let savesURL = URL(fileURLWithPath: extraSaves)
+            if let savesEnum = fm.enumerator(
+                at: savesURL,
+                includingPropertiesForKeys: [.isRegularFileKey],
+                options: [.skipsHiddenFiles]
+            ) {
+                for case let fileURL as URL in savesEnum {
+                    let ext = fileURL.pathExtension.lowercased()
+                    guard ext == "arf", !seenPaths.contains(fileURL.path) else { continue }
+                    seenPaths.insert(fileURL.path)
+                    items.append(DiskImageItem(
+                        name: fileURL.deletingPathExtension().lastPathComponent,
+                        category: "Saves",
+                        path: fileURL.path
+                    ))
+                }
+            }
         }
         return items.sorted {
             if $0.category != $1.category { return $0.category < $1.category }

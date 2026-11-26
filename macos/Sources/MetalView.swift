@@ -14,7 +14,10 @@ final class AmigaMetalView: MTKView, MTKViewDelegate {
     private var lastFrameTime: CFTimeInterval = 0
     private var frameAcc: Double = 0
     private var didPrebuffer: Bool = false
+    var isFrozen: Bool = false
     var warpMode: Bool = false
+    var slomoEnabled: Bool = false
+    var slomoFactor: Double = 0.475
     var joystickMode: Bool = false
     var stretchWidescreen: Bool = false
     var onMouseGrabChanged: ((Bool) -> Void)?
@@ -236,6 +239,9 @@ final class AmigaMetalView: MTKView, MTKViewDelegate {
         case 100: return 0x57 // F8
         case 101: return 0x58 // F9
         case 109: return 0x59 // F10
+        case 121: return 0x5F // Page Down -> Help
+        case 114: return 0x5F // Help / Insert -> Help
+        case 10: return 0x00  // ISO Section § -> ` ~
         case 82: return 0x0F // KP 0
         case 83: return 0x1D // KP 1
         case 84: return 0x1E // KP 2
@@ -246,12 +252,38 @@ final class AmigaMetalView: MTKView, MTKViewDelegate {
         case 89: return 0x3D // KP 7
         case 91: return 0x3E // KP 8
         case 92: return 0x3F // KP 9
+        case 65: return 0x3C // KP .
+        case 75: return 0x5C // KP /
+        case 67: return 0x5D // KP *
+        case 78: return 0x4A // KP -
+        case 69: return 0x5E // KP +
+        case 71: return 0x5A // KP Clear -> KP (
+        case 81: return 0x5B // KP = -> KP )
         default: return nil
         }
     }
 
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        // Reserve Control+<key> for emulator host shortcuts (menu items);
+        // capture Command ("Amiga") and Option ("Alt") key combinations for the emulated Amiga!
+        if event.modifierFlags.contains(.control) {
+            return super.performKeyEquivalent(with: event)
+        }
+        if window?.firstResponder === self,
+           event.modifierFlags.contains(.command) || event.modifierFlags.contains(.option) {
+            if event.type == .keyDown {
+                self.keyDown(with: event)
+                return true
+            } else if event.type == .keyUp {
+                self.keyUp(with: event)
+                return true
+            }
+        }
+        return super.performKeyEquivalent(with: event)
+    }
+
     override func keyDown(with event: NSEvent) {
-        if event.modifierFlags.contains(.command) {
+        if event.modifierFlags.contains(.control) {
             super.keyDown(with: event)
             return
         }
@@ -272,6 +304,10 @@ final class AmigaMetalView: MTKView, MTKViewDelegate {
     }
 
     override func keyUp(with event: NSEvent) {
+        if event.modifierFlags.contains(.control) {
+            super.keyUp(with: event)
+            return
+        }
         if joystickMode {
             switch event.keyCode {
             case 126: joyUp = false; pushJoystickState(); return
@@ -286,29 +322,98 @@ final class AmigaMetalView: MTKView, MTKViewDelegate {
         }
     }
 
+    private var leftShiftDown = false
+    private var rightShiftDown = false
+    private var leftOptionDown = false
+    private var rightOptionDown = false
+    private var leftCommandDown = false
+    private var rightCommandDown = false
+    private var capsLockDown = false
+
+    func releaseAllModifiers() {
+        if leftShiftDown { leftShiftDown = false; amiga_key_event(machine, 0x60, 0) }
+        if rightShiftDown { rightShiftDown = false; amiga_key_event(machine, 0x61, 0) }
+        if leftOptionDown { leftOptionDown = false; amiga_key_event(machine, 0x64, 0) }
+        if rightOptionDown { rightOptionDown = false; amiga_key_event(machine, 0x65, 0) }
+        if leftCommandDown { leftCommandDown = false; amiga_key_event(machine, 0x66, 0) }
+        if rightCommandDown { rightCommandDown = false; amiga_key_event(machine, 0x67, 0) }
+        prevModifiers = []
+    }
+
     override func flagsChanged(with event: NSEvent) {
         let flags = event.modifierFlags
+
+        // Shift -> Amiga Left Shift ($60) / Right Shift ($61) (or Joystick Fire in joystickMode)
         let shiftNow = flags.contains(.shift)
         let shiftPrev = prevModifiers.contains(.shift)
         if shiftNow != shiftPrev {
             if joystickMode {
                 joyFire = shiftNow
                 pushJoystickState()
+            } else if event.keyCode == 60 {
+                rightShiftDown = shiftNow
+                amiga_key_event(machine, 0x61, shiftNow ? 1 : 0) // Right Shift
             } else {
+                leftShiftDown = shiftNow
                 amiga_key_event(machine, 0x60, shiftNow ? 1 : 0) // Left Shift
+            }
+            if !shiftNow {
+                if leftShiftDown { leftShiftDown = false; amiga_key_event(machine, 0x60, 0) }
+                if rightShiftDown { rightShiftDown = false; amiga_key_event(machine, 0x61, 0) }
             }
         }
 
+        // Caps Lock -> Amiga Caps Lock ($62)
+        let capsNow = flags.contains(.capsLock)
+        if capsNow != capsLockDown {
+            capsLockDown = capsNow
+            amiga_key_event(machine, 0x62, capsNow ? 1 : 0)
+        }
+
+        // Control -> Amiga Control ($63)
         let ctrlNow = flags.contains(.control)
         let ctrlPrev = prevModifiers.contains(.control)
         if ctrlNow != ctrlPrev {
             amiga_key_event(machine, 0x63, ctrlNow ? 1 : 0) // Control
         }
 
+        // Option -> Amiga Left Alt ($64) / Right Alt ($65)
         let optNow = flags.contains(.option)
         let optPrev = prevModifiers.contains(.option)
         if optNow != optPrev {
-            amiga_key_event(machine, 0x64, optNow ? 1 : 0) // Left Alt
+            if event.keyCode == 61 {
+                rightOptionDown = optNow
+                amiga_key_event(machine, 0x65, optNow ? 1 : 0) // Right Alt
+            } else {
+                leftOptionDown = optNow
+                amiga_key_event(machine, 0x64, optNow ? 1 : 0) // Left Alt
+            }
+            if !optNow {
+                if leftOptionDown { leftOptionDown = false; amiga_key_event(machine, 0x64, 0) }
+                if rightOptionDown { rightOptionDown = false; amiga_key_event(machine, 0x65, 0) }
+            }
+        }
+
+        // Command (⌘) -> Amiga Left "A" ($66) / Right "A" ($67)
+        let cmdNow = flags.contains(.command)
+        let cmdPrev = prevModifiers.contains(.command)
+        if cmdNow != cmdPrev {
+            if event.keyCode == 54 {
+                rightCommandDown = cmdNow
+                amiga_key_event(machine, 0x67, cmdNow ? 1 : 0) // Right Amiga
+            } else {
+                leftCommandDown = cmdNow
+                amiga_key_event(machine, 0x66, cmdNow ? 1 : 0) // Left Amiga
+            }
+            if !cmdNow {
+                if leftCommandDown { leftCommandDown = false; amiga_key_event(machine, 0x66, 0) }
+                if rightCommandDown { rightCommandDown = false; amiga_key_event(machine, 0x67, 0) }
+            }
+        }
+
+        // Ctrl + Left Amiga + Right Amiga = classic 3-finger Amiga keyboard reset
+        if ctrlNow && ((leftCommandDown && rightCommandDown) || (cmdNow && event.keyCode == 54 && leftCommandDown) || (cmdNow && event.keyCode == 55 && rightCommandDown)) {
+            amiga_reset(machine)
         }
 
         prevModifiers = flags
@@ -408,7 +513,11 @@ final class AmigaMetalView: MTKView, MTKViewDelegate {
 
     func draw(in view: MTKView) {
         let steps: Int
-        if warpMode {
+        if isFrozen {
+            steps = 0
+            lastFrameTime = 0
+            frameAcc = 0
+        } else if warpMode {
             steps = 12
             lastFrameTime = 0
             frameAcc = 0
@@ -426,7 +535,8 @@ final class AmigaMetalView: MTKView, MTKViewDelegate {
                 let dt = min(max(now - lastFrameTime, 0), 0.1)
                 lastFrameTime = now
                 let palFps = 7_093_790.0 / (312.0 * 454.0)
-                frameAcc += dt * palFps
+                let speed = slomoEnabled ? min(max(slomoFactor, 0.08), 0.90) : 1.0
+                frameAcc += dt * palFps * speed
                 steps = min(Int(frameAcc), 4)
                 frameAcc -= Double(steps)
             }

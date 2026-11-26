@@ -1,6 +1,6 @@
-# AmigaEmu
+# Ami the Emu
 
-**Version:** `1.4.29`
+**Version:** `1.4.31`
 
 Native Amiga emulator for macOS (Apple Silicon & Intel) written in **C++20** (`AmigaCore`) and **Swift / AppKit / Metal** (`AmigaEmuApp`), licensed under the **GNU General Public License v3.0 (GPL-3.0)**.
 
@@ -18,14 +18,19 @@ Native Amiga emulator for macOS (Apple Silicon & Intel) written in **C++20** (`A
   - **ECS & AGA identification**: `Super Agnus 8375` / `Super Denise 8373` (A600) and `Alice` / `Lisa` (A1200 / A4000), plus A4000 motherboard registers (`Fat Gary`, `Ramsey rev 7`, `Super Buster rev 11`)
   - **Video modes**: Lores, Hires, Super-Hires (`SHRES` with 35 ns `PFxH0` scroll and 2× sprite supersampling), Interlace (`LACE`), Dual Playfield (OCS/ECS/AGA), `HAM-6` & `HAM-8`, `EHB`, `BRDRBLNK`, 64-bit AGA bitplane fetch (`FMODE`), and mid-scanline Copper & CPU palette/background updates
   - **Audio**: 4-channel Paula DMA audio streamed via `AVFoundation` with optional synthesized floppy drive step/motor sound
-  - **Storage, RTC & I/O**: `DF0:`–`DF3:` hot-detectable floppy drives (`.adf`), RDB/OFS/FFS/SFS & Dynamic VHD hard drives (`.hdf`) via AutoConfig HD and native **Gayle / A4000 IDE** (`$DA2000` / `$DD2000`), RTC (`$DC0000` MSM6242B / RP5C01), parallel Centronics & serial UART ports, CIA-A/CIA-B timers, mouse, keyboard, and joystick
+  - **Storage, RTC & I/O**: `DF0:`–`DF3:` hot-detectable floppy drives (`.adf` and SuperCard Pro `.scp` flux images), RDB/OFS/FFS/SFS & Dynamic VHD hard drives (`.hdf`) via AutoConfig HD and native **Gayle / A4000 IDE** (`$DA2000` / `$DD2000`), RTC (`$DC0000` MSM6242B / RP5C01), parallel Centronics & serial UART ports, CIA-A/CIA-B timers, mouse, full Amiga keyboard capture (`Command` = Left/Right `"A"` Amiga keys, `Option` = Left/Right `"Alt"`), and USB/Bluetooth `GCController` / `IOHIDManager` joysticks & gamepads
+
+- **Action Replay Mk III Freezer, SLOMO & Memory Trainer (A500 / A600 / A1200 / A4000)**
+  - **`.arf` (*Action Replay Freeze*) snapshots (`Ctrl+S` / snowflake button)**: one-click full machine & memory state freeze saved directly to `~/AmigaEmu/adf/Saves/`; double-clicking any `.arf` file in the right browser automatically restores the Amiga model, RAM configuration, CPU/CIA/Custom registers, and re-mounts all `DF0:`–`DF3:` floppies
+  - **Action Replay Mk III `SLOMO` panel (`Ctrl+G`)**: rotary potentiometer knob (`−`/`+`, 10%–85% PAL speed), chrome toggle switch (`ON`), and red `ACTIVE` LED below the left-panel tool buttons
+  - **Action Replay Mk III Freeze Monitor & Memory Trainer (`Ctrl+E` / `MEM`)**: live machine freeze, `680x0` register inspection, Hex/ASCII memory viewer & `POKE` editor (`Chip RAM`, `Slow RAM`, `Fast RAM`, `A4000 MB Fast RAM`), and `TS`/`T` value trainer for finding lives/ammo/energy in games
 
 - **Native macOS UI**
-  - **Metal** hardware-accelerated rendering with Sharp Bilinear filtering, 4:3 aspect-ratio preservation, borderless fullscreen (`Cmd+F`), and optional widescreen stretch (`Cmd+Shift+F`)
+  - **Metal** hardware-accelerated rendering with Sharp Bilinear filtering, 4:3 aspect-ratio preservation, borderless fullscreen (`Ctrl+F`), and optional widescreen stretch (`Ctrl+Shift+F`)
   - Built-in machine profiles: **Amiga 500**, **Amiga 600**, **Amiga 1200**, and **Amiga 4000**
   - Authentic A1200-style `POWER` / `F. DISK` / `H. DISK` LED bar and per-drive activity indicators
-  - Folder-tree `.adf` disk browser with automatic multi-disk mounting (`DF0:`–`DF3:` for folders with 1–4 `.adf` files)
-  - **Amiga-to-macOS printing** (`Cmd+P` or auto-print from `PRT:` / `PAR:` / `SER:` with ANSI & Epson `ESC/P` formatting to native macOS Print dialog / PDF / AirPrint)
+  - Folder-tree `.adf` / `.scp` / `.arf` browser with automatic multi-disk mounting (`DF0:`–`DF3:` for folders with 1–4 floppy images)
+  - **Amiga-to-macOS printing** (`Ctrl+P` or auto-print from `PRT:` / `PAR:` / `SER:` with ANSI & Epson `ESC/P` formatting to native macOS Print dialog / PDF / AirPrint)
   - Monokai dark theme and **English / Polish** UI localization
 
 ## Building & Running

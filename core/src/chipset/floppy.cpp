@@ -25,6 +25,138 @@ bool FloppyDrive::insert_adf(const uint8_t* data, size_t size) {
         return false;
     }
     adf_data_.assign(data, data + size);
+    is_scp_ = false;
+    for (auto& t : scp_tracks_) t.clear();
+    for (auto& c : scp_byte_cycles_) c.clear();
+    track_byte_cycles_.clear();
+    last_byte_cpu_cycles_ = 114u;
+    disk_path_.clear();
+    write_buf_.clear();
+    has_disk_ = true;
+    disk_changed_ = false;
+    cached_track_ = 0xFF;
+    track_pos_ = 0;
+    return true;
+}
+
+bool FloppyDrive::insert_scp(const uint8_t* data, size_t size) {
+    if (!data || size < 0x2B0u || data[0] != 'S' || data[1] != 'C' || data[2] != 'P') {
+        return false;
+    }
+    const uint8_t num_revs = data[5];
+    if (num_revs == 0) return false;
+
+    auto read_le32 = [&](size_t off) -> uint32_t {
+        if (off + 4u > size) return 0u;
+        return static_cast<uint32_t>(data[off]) |
+               (static_cast<uint32_t>(data[off + 1u]) << 8) |
+               (static_cast<uint32_t>(data[off + 2u]) << 16) |
+               (static_cast<uint32_t>(data[off + 3u]) << 24);
+    };
+
+    for (auto& t : scp_tracks_) t.clear();
+    for (auto& c : scp_byte_cycles_) c.clear();
+    bool any_track = false;
+
+    for (size_t trk = 0; trk < MAX_SCP_TRACKS; ++trk) {
+        const uint32_t trk_off = read_le32(0x10u + trk * 4u);
+        if (trk_off == 0 || trk_off + 16u > size) continue;
+        if (data[trk_off] != 'T' || data[trk_off + 1u] != 'R' || data[trk_off + 2u] != 'K') continue;
+
+        // Prefer revolution 1 if multiple revolutions exist (avoids splice jitter at index 0), else revolution 0
+        const size_t rev_idx = (num_revs > 1u) ? 1u : 0u;
+        const size_t rev_hdr = trk_off + 4u + rev_idx * 12u;
+        if (rev_hdr + 12u > size) continue;
+        const uint32_t dur_ticks = read_le32(rev_hdr);
+        const uint32_t num_cells = read_le32(rev_hdr + 4u);
+        const uint32_t data_rel = read_le32(rev_hdr + 8u);
+        const size_t cell_off = trk_off + data_rel;
+        if (num_cells == 0 || cell_off + static_cast<size_t>(num_cells) * 2u > size) continue;
+
+        // Estimate nominal bitcell period in 25ns ticks (~80 ticks = 2.0 us for DD 300 RPM)
+        double bitcell_ticks = 80.0;
+        if (dur_ticks > 7000000u && dur_ticks < 9000000u) {
+            bitcell_ticks = static_cast<double>(dur_ticks) / 100000.0;
+        }
+
+        std::vector<uint8_t> bits;
+        std::vector<uint16_t> bit_ticks;
+        bits.reserve(static_cast<size_t>(num_cells) * 3u);
+        bit_ticks.reserve(static_cast<size_t>(num_cells) * 3u);
+        uint32_t acc = 0;
+        double local_bitcell = bitcell_ticks;
+        for (uint32_t c = 0; c < num_cells; ++c) {
+            const uint16_t raw = static_cast<uint16_t>(
+                (static_cast<uint16_t>(data[cell_off + c * 2u]) << 8) |
+                data[cell_off + c * 2u + 1u]);
+            if (raw == 0) {
+                acc += 65536u;
+                continue;
+            }
+            const uint32_t dt = acc + raw;
+            acc = 0;
+            int cells_total = static_cast<int>((static_cast<double>(dt) / local_bitcell) + 0.5);
+            if (cells_total < 2) cells_total = 2;
+            if (cells_total > 4) cells_total = 4;
+            const double est_cell = static_cast<double>(dt) / static_cast<double>(cells_total);
+            if (est_cell >= 55.0 && est_cell <= 105.0) {
+                local_bitcell = local_bitcell * 0.96 + est_cell * 0.04;
+            }
+            const uint16_t per_bit_tick = static_cast<uint16_t>(
+                std::clamp<uint32_t>(dt / static_cast<uint32_t>(cells_total), 40u, 160u));
+            const int nzeros = cells_total - 1;
+            for (int z = 0; z < nzeros; ++z) {
+                bits.push_back(0u);
+                bit_ticks.push_back(per_bit_tick);
+            }
+            bits.push_back(1u);
+            bit_ticks.push_back(per_bit_tick);
+        }
+
+        if (bits.size() < 32u) continue;
+
+        // Pack into 16-bit MFM words aligned to the first sync marker ($4489 or $A245) if present,
+        // while also keeping per-sync realignment in sync_to_word().
+        size_t align_bit = 0;
+        uint16_t sr = 0;
+        for (size_t b = 0; b < bits.size(); ++b) {
+            sr = static_cast<uint16_t>((sr << 1) | bits[b]);
+            if (b >= 15u && (sr == 0x4489u || sr == 0xA245u)) {
+                align_bit = (b - 15u) & 15u;
+                break;
+            }
+        }
+
+        const size_t total_bits = bits.size();
+        const size_t num_words = (total_bits - align_bit) / 16u;
+        if (num_words == 0) continue;
+
+        auto& out_words = scp_tracks_[trk];
+        auto& out_cycles = scp_byte_cycles_[trk];
+        out_words.resize(num_words);
+        out_cycles.resize(num_words);
+        for (size_t w = 0; w < num_words; ++w) {
+            uint16_t word = 0;
+            uint32_t ticks_sum = 0;
+            const size_t base = align_bit + w * 16u;
+            for (size_t k = 0; k < 16u; ++k) {
+                word = static_cast<uint16_t>((word << 1) | bits[base + k]);
+                ticks_sum += bit_ticks[base + k];
+            }
+            out_words[w] = word;
+            // ticks_sum is the duration of 16 MFM bits (2 bytes) in 25ns units.
+            // 1 byte duration = (ticks_sum / 2) * 25ns. At 7.09379 MHz (140.968 ns/cycle),
+            // CPU cycles per byte = ticks_sum * 12.5 / 140.96836 ~= ticks_sum * 0.088672.
+            const uint32_t cyc = std::clamp<uint32_t>(
+                static_cast<uint32_t>((static_cast<double>(ticks_sum) * 0.088672) + 0.5), 80u, 180u);
+            out_cycles[w] = static_cast<uint8_t>(cyc);
+        }
+        any_track = true;
+    }
+
+    if (!any_track) return false;
+    adf_data_.clear();
+    is_scp_ = true;
     disk_path_.clear();
     write_buf_.clear();
     has_disk_ = true;
@@ -38,12 +170,18 @@ bool FloppyDrive::insert_adf_file(const std::string& path) {
     std::ifstream f(path, std::ios::binary | std::ios::ate);
     if (!f) return false;
     const auto sz = f.tellg();
-    if (sz != static_cast<std::streamoff>(ADF_SIZE)) return false;
-    std::vector<uint8_t> buf(ADF_SIZE);
+    if (sz <= 0) return false;
+    std::vector<uint8_t> buf(static_cast<size_t>(sz));
     f.seekg(0);
-    if (!f.read(reinterpret_cast<char*>(buf.data()), static_cast<std::streamsize>(ADF_SIZE))) {
+    if (!f.read(reinterpret_cast<char*>(buf.data()), static_cast<std::streamsize>(buf.size()))) {
         return false;
     }
+    if (buf.size() >= 16u && buf[0] == 'S' && buf[1] == 'C' && buf[2] == 'P') {
+        if (!insert_scp(buf.data(), buf.size())) return false;
+        disk_path_ = path;
+        return true;
+    }
+    if (buf.size() != ADF_SIZE) return false;
     if (!insert_adf(buf.data(), buf.size())) return false;
     disk_path_ = path;
     return true;
@@ -51,11 +189,16 @@ bool FloppyDrive::insert_adf_file(const std::string& path) {
 
 void FloppyDrive::eject() {
     has_disk_ = false;
+    is_scp_ = false;
+    for (auto& t : scp_tracks_) t.clear();
+    for (auto& c : scp_byte_cycles_) c.clear();
+    track_byte_cycles_.clear();
+    last_byte_cpu_cycles_ = 114u;
     disk_changed_ = true;
     disk_path_.clear();
     write_buf_.clear();
     adf_data_.clear();
-    track_mfm_.fill(0xAAAAu);
+    track_mfm_.assign(TRACK_WORDS, 0xAAAAu);
     cached_track_ = 0xFF;
 }
 
@@ -185,11 +328,27 @@ void FloppyDrive::encode_track(uint8_t cyl, uint8_t side) {
     raw.fill(0xAAu);
 
     if (!has_disk_) {
-        for (size_t i = 0; i < TRACK_WORDS; ++i) {
-            track_mfm_[i] = 0xAAAAu;
+        track_mfm_.assign(TRACK_WORDS, 0xAAAAu);
+        return;
+    }
+
+    if (is_scp_) {
+        if (linear_track < scp_tracks_.size() && !scp_tracks_[linear_track].empty()) {
+            track_mfm_ = scp_tracks_[linear_track];
+            track_byte_cycles_ = scp_byte_cycles_[linear_track];
+        } else {
+            track_mfm_.assign(TRACK_WORDS, 0xAAAAu);
+            track_byte_cycles_.clear();
+        }
+        if (track_pos_ >= track_mfm_.size()) {
+            track_pos_ = 0;
         }
         return;
     }
+
+    track_byte_cycles_.clear();
+    last_byte_cpu_cycles_ = 114u;
+    track_mfm_.resize(TRACK_WORDS);
 
     size_t pos = 0;
     uint8_t prev_bit = 0;
@@ -268,14 +427,88 @@ void FloppyDrive::encode_track(uint8_t cyl, uint8_t side) {
 
 uint16_t FloppyDrive::read_mfm_word(bool& out_index) {
     encode_track(cylinder_, side_);
+    if (track_mfm_.empty()) {
+        out_index = true;
+        return 0xAAAAu;
+    }
+    if (track_pos_ >= track_mfm_.size()) {
+        track_pos_ = 0;
+    }
     const uint16_t w = track_mfm_[track_pos_];
+    if (track_pos_ < track_byte_cycles_.size()) {
+        last_byte_cpu_cycles_ = track_byte_cycles_[track_pos_];
+    } else {
+        last_byte_cpu_cycles_ = 114u;
+    }
     ++track_pos_;
     out_index = false;
-    if (track_pos_ >= TRACK_WORDS) {
+    if (track_pos_ >= track_mfm_.size()) {
         track_pos_ = 0;
         out_index = true;
     }
     return w;
+}
+
+bool FloppyDrive::sync_to_word(uint16_t sync_word, size_t max_words, bool& out_index) {
+    encode_track(cylinder_, side_);
+    const size_t n = track_mfm_.size();
+    if (n == 0) {
+        out_index = true;
+        return false;
+    }
+    if (!is_scp_) {
+        for (size_t i = 0; i < max_words; ++i) {
+            bool idx = false;
+            const uint16_t w = read_mfm_word(idx);
+            if (idx) out_index = true;
+            if (w == sync_word) return true;
+        }
+        return false;
+    }
+
+    // Bit-level Paula shift-register sync search across raw SCP MFM stream:
+    // If sync_word is found at a non-zero bit offset, barrel-shift the circular track
+    // by that bit offset so all subsequent 16-bit DMA words are bit-aligned to DSKSYNC.
+    if (track_pos_ >= n) track_pos_ = 0;
+    uint32_t sr = track_mfm_[(track_pos_ + n - 1u) % n];
+    for (size_t step = 0; step < max_words; ++step) {
+        const size_t cur_w = track_pos_;
+        const uint16_t w = track_mfm_[cur_w];
+        track_pos_ = (cur_w + 1u) % n;
+        if (track_pos_ == 0) out_index = true;
+
+        for (unsigned bit = 0; bit < 16u; ++bit) {
+            sr = ((sr << 1) | ((w >> (15u - bit)) & 1u)) & 0xFFFFu;
+            if (static_cast<uint16_t>(sr) == sync_word) {
+                const unsigned shift = (bit + 1u) & 15u;
+                if (shift != 0u) {
+                    std::vector<uint16_t> shifted(n);
+                    std::vector<uint8_t> shifted_cyc(track_byte_cycles_.size());
+                    for (size_t k = 0; k < n; ++k) {
+                        const uint32_t hi = track_mfm_[k];
+                        const uint32_t lo = track_mfm_[(k + 1u) % n];
+                        shifted[k] = static_cast<uint16_t>(((hi << shift) | (lo >> (16u - shift))) & 0xFFFFu);
+                        if (k < track_byte_cycles_.size()) {
+                            shifted_cyc[k] = track_byte_cycles_[k];
+                        }
+                    }
+                    track_mfm_.swap(shifted);
+                    track_byte_cycles_.swap(shifted_cyc);
+                    const uint8_t linear_track = static_cast<uint8_t>(cylinder_ * 2u + side_);
+                    if (linear_track < scp_tracks_.size()) {
+                        scp_tracks_[linear_track] = track_mfm_;
+                        scp_byte_cycles_[linear_track] = track_byte_cycles_;
+                    }
+                    track_pos_ = (cur_w + 1u) % n;
+                }
+                if (track_pos_ < track_byte_cycles_.size()) {
+                    last_byte_cpu_cycles_ = track_byte_cycles_[track_pos_];
+                }
+                return true;
+            }
+        }
+    }
+    return false;
 }
 
 void FloppyDrive::write_mfm_word(uint16_t word) {

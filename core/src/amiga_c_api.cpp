@@ -332,3 +332,153 @@ size_t amiga_read_serial_output(AmigaMachine* machine, uint8_t* out_buf, size_t 
     if (!machine) return 0;
     return machine->a500.custom().drain_serial_tx(out_buf, max_len);
 }
+
+int amiga_save_arf_path(const AmigaMachine* machine, const char* path) {
+    if (!machine || !path) return 0;
+    return machine->a500.save_arf_file(path) ? 1 : 0;
+}
+
+int amiga_load_arf_path(AmigaMachine* machine, const char* path) {
+    if (!machine || !path) return 0;
+    return machine->a500.load_arf_file(path) ? 1 : 0;
+}
+
+int amiga_get_model(const AmigaMachine* machine) {
+    return machine ? static_cast<int>(machine->a500.model()) : 0;
+}
+
+int amiga_get_a500_chip_ram_512k(const AmigaMachine* machine) {
+    return (machine && machine->a500.a500_chip_ram_512k()) ? 1 : 0;
+}
+
+int amiga_get_a600_chip_ram_2mb(const AmigaMachine* machine) {
+    return (machine && machine->a500.a600_chip_ram_2mb()) ? 1 : 0;
+}
+
+uint32_t amiga_get_fast_ram_mb(const AmigaMachine* machine) {
+    return machine ? machine->a500.bus().fast_ram_mb() : 0;
+}
+
+int amiga_get_floppy_enabled(const AmigaMachine* machine, int unit) {
+    if (!machine || unit < 0 || unit >= 4) return 0;
+    return machine->a500.floppy(static_cast<size_t>(unit)).enabled() ? 1 : 0;
+}
+
+int amiga_get_floppy_write_protect(const AmigaMachine* machine, int unit) {
+    if (!machine || unit < 0 || unit >= 4) return 0;
+    return machine->a500.floppy(static_cast<size_t>(unit)).write_protected() ? 1 : 0;
+}
+
+const char* amiga_get_floppy_path(const AmigaMachine* machine, int unit) {
+    if (!machine || unit < 0 || unit >= 4) return "";
+    return machine->a500.floppy(static_cast<size_t>(unit)).disk_path().c_str();
+}
+
+uint8_t amiga_peek_ram8(const AmigaMachine* machine, uint32_t addr) {
+    if (!machine) return 0xFFu;
+    const auto& bus = machine->a500.bus();
+    const auto& chip = bus.chip_ram_vec();
+    if (addr < chip.size()) {
+        return chip[addr];
+    }
+    const auto& slow = bus.slow_ram_vec();
+    if (!slow.empty() && addr >= 0xC00000u && addr < 0xC00000u + slow.size()) {
+        return slow[addr - 0xC00000u];
+    }
+    const auto cfg = bus.capture_config_state();
+    const auto& fast = bus.fast_ram_vec();
+    if (cfg.fast_ram_configured && !fast.empty() && addr >= cfg.fast_ram_base && addr < cfg.fast_ram_base + fast.size()) {
+        return fast[addr - cfg.fast_ram_base];
+    }
+    const auto& mb_fast = bus.mb_fast_ram_vec();
+    if (!mb_fast.empty() && addr >= 0x07000000u && addr < 0x07000000u + mb_fast.size()) {
+        return mb_fast[addr - 0x07000000u];
+    }
+    const auto& rom = bus.rom_vec();
+    if (!rom.empty() && addr >= 0xF80000u && addr <= 0xFFFFFFu) {
+        return rom[(addr - 0xF80000u) % rom.size()];
+    }
+    return 0xFFu;
+}
+
+void amiga_poke_ram8(AmigaMachine* machine, uint32_t addr, uint8_t val) {
+    if (!machine) return;
+    auto& bus = machine->a500.bus();
+    auto& chip = bus.chip_ram_vec_mut();
+    if (addr < chip.size()) {
+        chip[addr] = val;
+        return;
+    }
+    auto& slow = bus.slow_ram_vec_mut();
+    if (!slow.empty() && addr >= 0xC00000u && addr < 0xC00000u + slow.size()) {
+        slow[addr - 0xC00000u] = val;
+        return;
+    }
+    const auto cfg = bus.capture_config_state();
+    auto& fast = bus.fast_ram_vec_mut();
+    if (cfg.fast_ram_configured && !fast.empty() && addr >= cfg.fast_ram_base && addr < cfg.fast_ram_base + fast.size()) {
+        fast[addr - cfg.fast_ram_base] = val;
+        return;
+    }
+    auto& mb_fast = bus.mb_fast_ram_vec_mut();
+    if (!mb_fast.empty() && addr >= 0x07000000u && addr < 0x07000000u + mb_fast.size()) {
+        mb_fast[addr - 0x07000000u] = val;
+        return;
+    }
+}
+
+uint32_t amiga_get_chip_ram_size(const AmigaMachine* machine) {
+    return machine ? static_cast<uint32_t>(machine->a500.bus().chip_ram_vec().size()) : 0;
+}
+
+uint32_t amiga_get_slow_ram_size(const AmigaMachine* machine) {
+    return machine ? static_cast<uint32_t>(machine->a500.bus().slow_ram_vec().size()) : 0;
+}
+
+uint32_t amiga_get_fast_ram_base(const AmigaMachine* machine) {
+    if (!machine) return 0;
+    const auto cfg = machine->a500.bus().capture_config_state();
+    return cfg.fast_ram_configured ? cfg.fast_ram_base : 0;
+}
+
+uint32_t amiga_get_fast_ram_size(const AmigaMachine* machine) {
+    if (!machine) return 0;
+    const auto cfg = machine->a500.bus().capture_config_state();
+    return cfg.fast_ram_configured ? static_cast<uint32_t>(machine->a500.bus().fast_ram_vec().size()) : 0;
+}
+
+uint32_t amiga_get_mb_fast_ram_size(const AmigaMachine* machine) {
+    return machine ? static_cast<uint32_t>(machine->a500.bus().mb_fast_ram_vec().size()) : 0;
+}
+
+uint32_t amiga_get_d_reg(const AmigaMachine* machine, int reg) {
+    if (!machine || reg < 0 || reg >= 8) return 0;
+    return machine->a500.cpu().d(static_cast<unsigned>(reg));
+}
+
+void amiga_set_d_reg(AmigaMachine* machine, int reg, uint32_t val) {
+    if (machine && reg >= 0 && reg < 8) {
+        machine->a500.cpu().set_d(static_cast<unsigned>(reg), val);
+    }
+}
+
+uint32_t amiga_get_a_reg(const AmigaMachine* machine, int reg) {
+    if (!machine || reg < 0 || reg >= 8) return 0;
+    return machine->a500.cpu().a(static_cast<unsigned>(reg));
+}
+
+void amiga_set_a_reg(AmigaMachine* machine, int reg, uint32_t val) {
+    if (machine && reg >= 0 && reg < 8) {
+        machine->a500.cpu().set_a(static_cast<unsigned>(reg), val);
+    }
+}
+
+uint16_t amiga_get_sr(const AmigaMachine* machine) {
+    return machine ? machine->a500.cpu().sr() : 0;
+}
+
+void amiga_set_pc(AmigaMachine* machine, uint32_t val) {
+    if (machine) {
+        machine->a500.cpu().set_pc(val);
+    }
+}

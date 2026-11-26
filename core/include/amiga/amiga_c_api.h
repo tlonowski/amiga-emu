@@ -46,6 +46,28 @@ void amiga_mouse_move(AmigaMachine* machine, int32_t dx, int32_t dy);
 void amiga_mouse_buttons(AmigaMachine* machine, int left, int right);
 size_t amiga_read_parallel_output(AmigaMachine* machine, uint8_t* out_buf, size_t max_len);
 size_t amiga_read_serial_output(AmigaMachine* machine, uint8_t* out_buf, size_t max_len);
+int amiga_save_arf_path(const AmigaMachine* machine, const char* path);
+int amiga_load_arf_path(AmigaMachine* machine, const char* path);
+int amiga_get_model(const AmigaMachine* machine);
+int amiga_get_a500_chip_ram_512k(const AmigaMachine* machine);
+int amiga_get_a600_chip_ram_2mb(const AmigaMachine* machine);
+uint32_t amiga_get_fast_ram_mb(const AmigaMachine* machine);
+int amiga_get_floppy_enabled(const AmigaMachine* machine, int unit);
+int amiga_get_floppy_write_protect(const AmigaMachine* machine, int unit);
+const char* amiga_get_floppy_path(const AmigaMachine* machine, int unit);
+uint8_t amiga_peek_ram8(const AmigaMachine* machine, uint32_t addr);
+void amiga_poke_ram8(AmigaMachine* machine, uint32_t addr, uint8_t val);
+uint32_t amiga_get_chip_ram_size(const AmigaMachine* machine);
+uint32_t amiga_get_slow_ram_size(const AmigaMachine* machine);
+uint32_t amiga_get_fast_ram_base(const AmigaMachine* machine);
+uint32_t amiga_get_fast_ram_size(const AmigaMachine* machine);
+uint32_t amiga_get_mb_fast_ram_size(const AmigaMachine* machine);
+uint32_t amiga_get_d_reg(const AmigaMachine* machine, int reg);
+void amiga_set_d_reg(AmigaMachine* machine, int reg, uint32_t val);
+uint32_t amiga_get_a_reg(const AmigaMachine* machine, int reg);
+void amiga_set_a_reg(AmigaMachine* machine, int reg, uint32_t val);
+uint16_t amiga_get_sr(const AmigaMachine* machine);
+void amiga_set_pc(AmigaMachine* machine, uint32_t val);
 
 #ifdef __cplusplus
 }

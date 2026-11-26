@@ -1,5 +1,8 @@
 #include "amiga/machine.hpp"
 
+#include <fstream>
+#include <vector>
+
 namespace amiga {
 
 Amiga500::Amiga500()
@@ -253,6 +256,224 @@ uint32_t Amiga500::led_state() const {
     }
     state |= (static_cast<uint32_t>(active_cyl) << 8);
     return state;
+}
+
+namespace {
+template <typename T>
+bool write_pod(std::ostream& out, const T& val) {
+    out.write(reinterpret_cast<const char*>(&val), sizeof(T));
+    return out.good();
+}
+
+template <typename T>
+bool read_pod(std::istream& in, T& val) {
+    in.read(reinterpret_cast<char*>(&val), sizeof(T));
+    return in.good();
+}
+
+bool write_string(std::ostream& out, const std::string& s) {
+    const uint32_t len = static_cast<uint32_t>(s.size());
+    if (!write_pod(out, len)) return false;
+    if (len > 0) {
+        out.write(s.data(), len);
+    }
+    return out.good();
+}
+
+bool read_string(std::istream& in, std::string& s) {
+    uint32_t len = 0;
+    if (!read_pod(in, len) || len > 65536u) return false;
+    s.resize(len);
+    if (len > 0) {
+        in.read(s.data(), len);
+    }
+    return in.good();
+}
+
+bool write_bytes(std::ostream& out, const std::vector<uint8_t>& v) {
+    const uint32_t len = static_cast<uint32_t>(v.size());
+    if (!write_pod(out, len)) return false;
+    if (len > 0) {
+        out.write(reinterpret_cast<const char*>(v.data()), len);
+    }
+    return out.good();
+}
+
+bool read_bytes(std::istream& in, std::vector<uint8_t>& v, uint32_t max_len) {
+    uint32_t len = 0;
+    if (!read_pod(in, len) || len > max_len) return false;
+    v.resize(len);
+    if (len > 0) {
+        in.read(reinterpret_cast<char*>(v.data()), len);
+    }
+    return in.good();
+}
+}  // namespace
+
+bool Amiga500::save_arf_file(const std::string& path) const {
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    if (!out) return false;
+
+    const char magic[4] = {'A', 'R', 'F', '1'};
+    out.write(magic, 4);
+    const uint32_t version = 1u;
+    if (!write_pod(out, version)) return false;
+
+    // 1. Machine model and RAM sizes
+    const uint8_t model_u8 = static_cast<uint8_t>(model_);
+    const uint8_t chip512 = bus_.a500_chip_ram_512k() ? 1u : 0u;
+    const uint8_t chip2m = bus_.a600_chip_ram_2mb() ? 1u : 0u;
+    const uint32_t fast_mb = bus_.fast_ram_mb();
+    if (!write_pod(out, model_u8) ||
+        !write_pod(out, chip512) ||
+        !write_pod(out, chip2m) ||
+        !write_pod(out, fast_mb) ||
+        !write_pod(out, e_clock_rem_)) {
+        return false;
+    }
+
+    // 2. Floppies (paths + drive mechanics)
+    for (size_t i = 0; i < floppies_.size(); ++i) {
+        if (!write_string(out, floppies_[i].disk_path())) return false;
+        const auto fstate = floppies_[i].capture_state();
+        if (!write_pod(out, fstate)) return false;
+    }
+
+    // 3. CPU, CIA-A, CIA-B, CustomChips, and Bus config
+    const auto cpu_state = cpu_.capture_state();
+    const auto cia_a_state = cia_a_.capture_state();
+    const auto cia_b_state = cia_b_.capture_state();
+    const auto custom_state = custom_.capture_state();
+    const auto bus_cfg = bus_.capture_config_state();
+    if (!write_pod(out, cpu_state) ||
+        !write_pod(out, cia_a_state) ||
+        !write_pod(out, cia_b_state) ||
+        !write_pod(out, custom_state) ||
+        !write_pod(out, bus_cfg)) {
+        return false;
+    }
+
+    // 4. Framebuffer snapshot so the screen immediately displays the frozen frame
+    const auto& fb = custom_.framebuffer_array();
+    out.write(reinterpret_cast<const char*>(fb.data()), fb.size() * sizeof(uint32_t));
+    if (!out.good()) return false;
+
+    // 5. Memory buffers (ROM, ExtROM, Chip RAM, Slow RAM, MB Fast RAM, Fast RAM)
+    if (!write_bytes(out, bus_.rom_vec()) ||
+        !write_bytes(out, bus_.ext_rom_vec()) ||
+        !write_bytes(out, bus_.chip_ram_vec()) ||
+        !write_bytes(out, bus_.slow_ram_vec()) ||
+        !write_bytes(out, bus_.mb_fast_ram_vec()) ||
+        !write_bytes(out, bus_.fast_ram_vec())) {
+        return false;
+    }
+
+    return out.good();
+}
+
+bool Amiga500::load_arf_file(const std::string& path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) return false;
+
+    char magic[4] = {};
+    in.read(magic, 4);
+    if (!in.good() || magic[0] != 'A' || magic[1] != 'R' || magic[2] != 'F' || magic[3] != '1') {
+        return false;
+    }
+    uint32_t version = 0;
+    if (!read_pod(in, version) || version != 1u) return false;
+
+    uint8_t model_u8 = 0;
+    uint8_t chip512 = 0;
+    uint8_t chip2m = 0;
+    uint32_t fast_mb = 0;
+    uint32_t saved_e_rem = 0;
+    if (!read_pod(in, model_u8) ||
+        !read_pod(in, chip512) ||
+        !read_pod(in, chip2m) ||
+        !read_pod(in, fast_mb) ||
+        !read_pod(in, saved_e_rem)) {
+        return false;
+    }
+
+    std::array<std::string, 4> floppy_paths;
+    std::array<FloppyDrive::DriveStateSnapshot, 4> floppy_states;
+    for (size_t i = 0; i < 4; ++i) {
+        if (!read_string(in, floppy_paths[i]) || !read_pod(in, floppy_states[i])) {
+            return false;
+        }
+    }
+
+    M68k::StateSnapshot cpu_state;
+    Cia8520::StateSnapshot cia_a_state;
+    Cia8520::StateSnapshot cia_b_state;
+    CustomChips::StateSnapshot custom_state;
+    AmigaBus::ConfigStateSnapshot bus_cfg;
+    if (!read_pod(in, cpu_state) ||
+        !read_pod(in, cia_a_state) ||
+        !read_pod(in, cia_b_state) ||
+        !read_pod(in, custom_state) ||
+        !read_pod(in, bus_cfg)) {
+        return false;
+    }
+
+    std::vector<uint32_t> fb_buf(CustomChips::FB_WIDTH * CustomChips::FB_HEIGHT);
+    in.read(reinterpret_cast<char*>(fb_buf.data()), fb_buf.size() * sizeof(uint32_t));
+    if (!in.good()) return false;
+
+    std::vector<uint8_t> rom_buf, ext_rom_buf, chip_buf, slow_buf, mb_fast_buf, fast_buf;
+    if (!read_bytes(in, rom_buf, 2u * 1024u * 1024u) ||
+        !read_bytes(in, ext_rom_buf, 2u * 1024u * 1024u) ||
+        !read_bytes(in, chip_buf, 4u * 1024u * 1024u) ||
+        !read_bytes(in, slow_buf, 4u * 1024u * 1024u) ||
+        !read_bytes(in, mb_fast_buf, 32u * 1024u * 1024u) ||
+        !read_bytes(in, fast_buf, 256u * 1024u * 1024u)) {
+        return false;
+    }
+
+    // Apply model and memory config
+    set_model(static_cast<AmigaModel>(model_u8 <= 3 ? model_u8 : 0));
+    set_a500_chip_ram_512k(chip512 != 0);
+    set_a600_chip_ram_2mb(chip2m != 0);
+    set_fast_ram_mb(fast_mb);
+    reset();
+
+    if (!rom_buf.empty()) {
+        load_rom(rom_buf.data(), rom_buf.size());
+    }
+    if (!ext_rom_buf.empty()) {
+        load_ext_rom(ext_rom_buf.data(), ext_rom_buf.size());
+    } else {
+        clear_ext_rom();
+    }
+
+    // Reconnect floppies and restore drive state
+    for (size_t i = 0; i < 4; ++i) {
+        if (!floppy_paths[i].empty()) {
+            insert_adf(i, floppy_paths[i]);
+        } else {
+            eject_adf(i);
+        }
+        floppies_[i].restore_state(floppy_states[i]);
+    }
+
+    // Restore RAM buffers and re-bind CustomChips Chip RAM pointer
+    bus_.chip_ram_vec_mut() = std::move(chip_buf);
+    bus_.slow_ram_vec_mut() = std::move(slow_buf);
+    bus_.mb_fast_ram_vec_mut() = std::move(mb_fast_buf);
+    bus_.fast_ram_vec_mut() = std::move(fast_buf);
+    custom_.set_chip_ram(bus_.chip_ram_vec_mut().data(), bus_.chip_ram_vec_mut().size());
+
+    // Restore component states
+    bus_.restore_config_state(bus_cfg);
+    cia_a_.restore_state(cia_a_state);
+    cia_b_.restore_state(cia_b_state);
+    custom_.restore_state(custom_state);
+    std::copy(fb_buf.begin(), fb_buf.end(), custom_.framebuffer_array_mut().begin());
+    cpu_.restore_state(cpu_state);
+    e_clock_rem_ = saved_e_rem;
+
+    return true;
 }
 
 }  // namespace amiga

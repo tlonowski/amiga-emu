@@ -210,9 +210,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTo
     private var audioOutput: AmigaAudioOutput!
     private var machine: OpaquePointer!
     private var mouseMenuItem: NSMenuItem?
+    private var warpMenuItem: NSMenuItem?
+    private var slomoMenuItem: NSMenuItem?
+    private var joystickMenuItem: NSMenuItem?
+    private var fullScreenMenuItem: NSMenuItem?
     private let ledBarView = AmigaLedBarView()
     private var ledTimer: Timer?
     private let printerSpooler = AmigaPrinterSpooler()
+    private var arMonitorController: ActionReplayMonitorWindowController?
 
     private var profiles: [AmigaModelType: AmigaProfileConfig] = [
         .a500: AmigaProfileConfig(model: .a500),
@@ -416,7 +421,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTo
             btn.bezelStyle = .texturedRounded
             btn.isBordered = false
             btn.imagePosition = .imageOnly
-            btn.toolTip = L10n.t("Pokaż/ukryj panel maszyn Amigi (Cmd+1)", "Show/hide Amiga machines panel (Cmd+1)")
+            btn.toolTip = L10n.t("Pokaż/ukryj panel maszyn Amigi (Ctrl+1)", "Show/hide Amiga machines panel (Ctrl+1)")
             btn.translatesAutoresizingMaskIntoConstraints = false
             btn.widthAnchor.constraint(equalToConstant: 28).isActive = true
             btn.heightAnchor.constraint(equalToConstant: 24).isActive = true
@@ -438,7 +443,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTo
             item.view = ledBarView
         case tbRightSidebar:
             item.label = L10n.t("Obrazy dysków", "Disk Images")
-            item.toolTip = L10n.t("Pokaż/ukryj panel obrazów dysków (Cmd+2)", "Show/hide disk images panel (Cmd+2)")
+            item.toolTip = L10n.t("Pokaż/ukryj panel obrazów dysków (Ctrl+2)", "Show/hide disk images panel (Ctrl+2)")
             item.image = NSImage(systemSymbolName: "sidebar.right", accessibilityDescription: item.label)
             item.action = #selector(toggleRightSidebar)
         default:
@@ -456,27 +461,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTo
         mainMenu.addItem(appItem)
         let appMenu = NSMenu()
         appItem.submenu = appMenu
-        appMenu.addItem(withTitle: L10n.t("Otwórz Kickstart ROM...", "Open Kickstart ROM..."), action: #selector(openRom), keyEquivalent: "o")
-        appMenu.addItem(withTitle: L10n.t("Włóż dyskietkę (.adf)...", "Insert Floppy (.adf)..."), action: #selector(insertAdf), keyEquivalent: "d")
-        appMenu.addItem(withTitle: L10n.t("Resetuj Amigę", "Reset Amiga"), action: #selector(resetMachine), keyEquivalent: "r")
+
+        @discardableResult
+        func addCtrlItem(_ title: String, action: Selector, key: String, extraModifiers: NSEvent.ModifierFlags = []) -> NSMenuItem {
+            let item = appMenu.addItem(withTitle: title, action: action, keyEquivalent: key)
+            if !key.isEmpty {
+                var mask: NSEvent.ModifierFlags = [.control]
+                mask.formUnion(extraModifiers)
+                item.keyEquivalentModifierMask = mask
+            }
+            return item
+        }
+
+        addCtrlItem(L10n.t("Otwórz Kickstart ROM...", "Open Kickstart ROM..."), action: #selector(openRom), key: "o")
+        addCtrlItem(L10n.t("Włóż dyskietkę (.adf)...", "Insert Floppy (.adf)..."), action: #selector(insertAdf), key: "d")
+        addCtrlItem(L10n.t("Zamroź i zapisz stan (.arf)", "Freeze & Save State (.arf)"), action: #selector(freezeMachineSnapshot), key: "s")
+        addCtrlItem(L10n.t("Wczytaj stan (.arf)...", "Load State (.arf)..."), action: #selector(openMachineSnapshotDialog), key: "l")
+        addCtrlItem(L10n.t("Action Replay — Monitor i Edytor Pamięci...", "Action Replay — Freeze Monitor & Memory Editor..."), action: #selector(openActionReplayMonitor), key: "e")
+        addCtrlItem(L10n.t("Resetuj Amigę", "Reset Amiga"), action: #selector(resetMachine), key: "r")
         appMenu.addItem(NSMenuItem.separator())
-        appMenu.addItem(withTitle: L10n.t("Tryb Warp", "Toggle Warp Speed"), action: #selector(toggleWarp), keyEquivalent: "t")
-        appMenu.addItem(withTitle: L10n.t("Tryb Joysticka (Strzałki + Shift)", "Toggle Joystick Mode (Arrows + Shift)"), action: #selector(toggleJoystick), keyEquivalent: "j")
-        mouseMenuItem = appMenu.addItem(withTitle: L10n.t("Przechwyć mysz", "Capture Mouse"), action: #selector(toggleMouseGrab), keyEquivalent: "m")
-        appMenu.addItem(withTitle: L10n.t("Pełen ekran", "Toggle Full Screen"), action: #selector(toggleFullScreen), keyEquivalent: "f")
-        let wsItem = appMenu.addItem(withTitle: L10n.t("Widescreen na pełnym ekranie", "Widescreen in Full Screen"), action: #selector(toggleWidescreenFullScreen(_:)), keyEquivalent: "F")
+        warpMenuItem = addCtrlItem(L10n.t("Tryb Warp", "Toggle Warp Speed"), action: #selector(toggleWarp(_:)), key: "t")
+        warpMenuItem?.state = metalView.warpMode ? .on : .off
+        slomoMenuItem = addCtrlItem(L10n.t("Action Replay SLOMO (Spowolnienie)", "Action Replay SLOMO (Slow Motion)"), action: #selector(toggleSlomo(_:)), key: "g")
+        slomoMenuItem?.state = metalView.slomoEnabled ? .on : .off
+        joystickMenuItem = addCtrlItem(L10n.t("Tryb Joysticka (Strzałki + Shift)", "Toggle Joystick Mode (Arrows + Shift)"), action: #selector(toggleJoystick(_:)), key: "j")
+        joystickMenuItem?.state = metalView.joystickMode ? .on : .off
+        mouseMenuItem = addCtrlItem(L10n.t("Przechwyć mysz", "Capture Mouse"), action: #selector(toggleMouseGrab), key: "m")
+        mouseMenuItem?.state = metalView.mouseGrabbed ? .on : .off
+        fullScreenMenuItem = addCtrlItem(L10n.t("Pełen ekran", "Toggle Full Screen"), action: #selector(toggleFullScreen), key: "f")
+        fullScreenMenuItem?.state = (isTrueFullScreen || window.styleMask.contains(.fullScreen)) ? .on : .off
+        let wsItem = addCtrlItem(L10n.t("Widescreen na pełnym ekranie", "Widescreen in Full Screen"), action: #selector(toggleWidescreenFullScreen(_:)), key: "f", extraModifiers: [.shift])
         wsItem.state = widescreenFullScreen ? .on : .off
         widescreenMenuItem = wsItem
-        let floppySoundItem = appMenu.addItem(withTitle: L10n.t("Dźwięk stacji dyskietek", "Floppy Drive Sound"), action: #selector(toggleFloppySound(_:)), keyEquivalent: "")
+        let floppySoundItem = addCtrlItem(L10n.t("Dźwięk stacji dyskietek", "Floppy Drive Sound"), action: #selector(toggleFloppySound(_:)), key: "")
         floppySoundItem.state = floppySoundEnabled ? .on : .off
         appMenu.addItem(NSMenuItem.separator())
-        appMenu.addItem(withTitle: L10n.t("Drukuj z Amigi (PRT: / PAR: / SER:)...", "Print from Amiga (PRT: / PAR: / SER:)..."), action: #selector(printAmigaOutput), keyEquivalent: "p")
-        let autoPrintItem = appMenu.addItem(withTitle: L10n.t("Automatyczny wydruk z Amigi na macOS", "Auto-Print from Amiga to macOS"), action: #selector(toggleAutoPrint(_:)), keyEquivalent: "")
+        addCtrlItem(L10n.t("Drukuj z Amigi (PRT: / PAR: / SER:)...", "Print from Amiga (PRT: / PAR: / SER:)..."), action: #selector(printAmigaOutput), key: "p")
+        let autoPrintItem = addCtrlItem(L10n.t("Automatyczny wydruk z Amigi na macOS", "Auto-Print from Amiga to macOS"), action: #selector(toggleAutoPrint(_:)), key: "")
         autoPrintItem.state = printerSpooler.autoPrintEnabled ? .on : .off
-        appMenu.addItem(withTitle: L10n.t("Wyczyść bufor drukarki Amigi", "Clear Amiga Printer Buffer"), action: #selector(clearAmigaPrinterBuffer), keyEquivalent: "")
+        addCtrlItem(L10n.t("Wyczyść bufor drukarki Amigi", "Clear Amiga Printer Buffer"), action: #selector(clearAmigaPrinterBuffer), key: "")
         appMenu.addItem(NSMenuItem.separator())
-        appMenu.addItem(withTitle: L10n.t("Panel maszyn", "Toggle Machines Panel"), action: #selector(toggleLeftSidebar), keyEquivalent: "1")
-        appMenu.addItem(withTitle: L10n.t("Panel obrazów dysków", "Toggle Disks Panel"), action: #selector(toggleRightSidebar), keyEquivalent: "2")
+        addCtrlItem(L10n.t("Panel maszyn", "Toggle Machines Panel"), action: #selector(toggleLeftSidebar), key: "1")
+        addCtrlItem(L10n.t("Panel obrazów dysków", "Toggle Disks Panel"), action: #selector(toggleRightSidebar), key: "2")
         appMenu.addItem(NSMenuItem.separator())
         let langRoot = NSMenuItem(title: L10n.t("Język / Language", "Language"), action: nil, keyEquivalent: "")
         let langMenu = NSMenu()
@@ -495,7 +521,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTo
         langRoot.submenu = langMenu
         appMenu.addItem(langRoot)
         appMenu.addItem(NSMenuItem.separator())
-        appMenu.addItem(withTitle: L10n.t("Zakończ AmigaEmu", "Quit AmigaEmu"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        addCtrlItem(L10n.t("Zakończ Ami the Emu", "Quit Ami the Emu"), action: #selector(NSApplication.terminate(_:)), key: "q")
 
         NSApp.mainMenu = mainMenu
     }
@@ -530,6 +556,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTo
     }
 
     @objc private func resetMachine() {
+        leftVC?.flashTool(.reset)
         if let profile = profiles[activeModel] {
             amiga_clear_hdfs(machine)
             for hd in profile.hardDrives {
@@ -546,17 +573,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTo
         var tags: [String] = []
         if metalView.joystickMode { tags.append("[JOY]") }
         if let pad = connectedControllerName { tags.append("[PAD: \(pad)]") }
-        if metalView.mouseGrabbed { tags.append("[MOUSE - Cmd+M release]") }
+        if metalView.mouseGrabbed { tags.append("[MOUSE - Ctrl+M release]") }
         if metalView.warpMode { tags.append("[WARP 12x]") }
-        let base = "\(activeModel.rawValue) — Native macOS Emulator"
+        if metalView.slomoEnabled {
+            let pct = Int((metalView.slomoFactor * 100.0).rounded())
+            tags.append("[SLOMO \(pct)%]")
+        }
+        let base = "Ami the Emu — \(activeModel.rawValue)"
         let fullTitle = tags.isEmpty ? base : (base + " " + tags.joined(separator: " "))
         window.title = fullTitle
         titleBarLabel.stringValue = fullTitle
-        leftVC?.setToolStates(warp: metalView.warpMode, joystick: metalView.joystickMode)
+        let hasController = (connectedControllerName != nil)
+        let isFull = isTrueFullScreen || window.styleMask.contains(.fullScreen)
+        warpMenuItem?.state = metalView.warpMode ? .on : .off
+        slomoMenuItem?.state = metalView.slomoEnabled ? .on : .off
+        joystickMenuItem?.state = metalView.joystickMode ? .on : .off
+        fullScreenMenuItem?.state = isFull ? .on : .off
+        leftVC?.setToolStates(
+            warp: metalView.warpMode,
+            joystick: metalView.joystickMode || hasController,
+            fullScreen: isFull,
+            slomo: metalView.slomoEnabled
+        )
+    }
+
+    func windowDidEnterFullScreen(_ notification: Notification) {
+        updateWindowTitle()
+    }
+
+    func windowDidExitFullScreen(_ notification: Notification) {
+        updateWindowTitle()
     }
 
     func windowDidResignKey(_ notification: Notification) {
         metalView.mouseGrabbed = false
+        metalView.releaseAllModifiers()
     }
 
     @objc private func toggleMouseGrab(_ sender: NSMenuItem) {
@@ -584,6 +635,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTo
             let targetFrame = (window.screen ?? NSScreen.main)?.frame ?? savedWindowFrame
             window.setFrame(targetFrame, display: true)
             metalView.stretchWidescreen = widescreenFullScreen
+            updateWindowTitle()
             window.makeKeyAndOrderFront(nil)
             window.makeFirstResponder(metalView)
         } else {
@@ -621,6 +673,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTo
     }
 
     @objc private func printAmigaOutput() {
+        leftVC?.flashTool(.print)
         printerSpooler.printCurrentJob(in: window)
         window.makeFirstResponder(metalView)
     }
@@ -650,14 +703,76 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTo
 
     @objc private func toggleWarp(_ sender: NSMenuItem) {
         metalView.warpMode.toggle()
+        if metalView.warpMode {
+            metalView.slomoEnabled = false
+        }
         sender.state = metalView.warpMode ? .on : .off
         updateWindowTitle()
     }
 
     @objc private func toggleWarpToolbar() {
         metalView.warpMode.toggle()
+        if metalView.warpMode {
+            metalView.slomoEnabled = false
+        }
         updateWindowTitle()
         window.makeFirstResponder(metalView)
+    }
+
+    @objc private func toggleSlomo(_ sender: NSMenuItem) {
+        metalView.slomoEnabled.toggle()
+        if metalView.slomoEnabled {
+            metalView.warpMode = false
+            if let leftVC = leftVC {
+                metalView.slomoFactor = leftVC.slomoSpeedMultiplier
+            }
+        }
+        updateWindowTitle()
+        window.makeFirstResponder(metalView)
+    }
+
+    func sidebarDidChangeSlomo(enabled: Bool, factor: Double) {
+        metalView.slomoEnabled = enabled
+        metalView.slomoFactor = factor
+        if enabled {
+            metalView.warpMode = false
+        }
+        updateWindowTitle()
+        window.makeFirstResponder(metalView)
+    }
+
+    func sidebarDidRequestActionReplayMonitor() {
+        openActionReplayMonitor()
+    }
+
+    @objc private func openActionReplayMonitor() {
+        guard let machine = machine else { return }
+        metalView.isFrozen = true
+        if arMonitorController == nil {
+            arMonitorController = ActionReplayMonitorWindowController(
+                machine: machine,
+                onSaveSnapshot: { [weak self] in
+                    self?.freezeMachineSnapshot()
+                },
+                onResumeEmulation: { [weak self] in
+                    guard let self = self else { return }
+                    self.metalView.isFrozen = false
+                    self.window.makeFirstResponder(self.metalView)
+                }
+            )
+            if let win = arMonitorController?.window {
+                NotificationCenter.default.addObserver(
+                    forName: NSWindow.willCloseNotification,
+                    object: win,
+                    queue: .main
+                ) { [weak self] _ in
+                    self?.metalView.isFrozen = false
+                }
+            }
+        }
+        arMonitorController?.refreshAll()
+        arMonitorController?.showWindow(nil)
+        arMonitorController?.window?.makeKeyAndOrderFront(nil)
     }
 
     // MARK: - LeftSidebarDelegate
@@ -665,11 +780,91 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTo
     func sidebarDidRequestTool(_ tool: SidebarTool) {
         switch tool {
         case .reset: resetMachine()
+        case .freeze: freezeMachineSnapshot()
         case .warp: toggleWarpToolbar()
         case .joystick: toggleJoystickToolbar()
         case .print: printAmigaOutput()
         case .fullScreen: toggleFullScreen()
         }
+    }
+
+    @objc private func freezeMachineSnapshot() {
+        guard let machine = machine else { return }
+        leftVC?.flashTool(.freeze)
+        AmigaPaths.ensureDirectoryStructure()
+        let savesDir = AmigaPaths.savesDirectoryPath
+        let fm = FileManager.default
+        if !fm.fileExists(atPath: savesDir) {
+            try? fm.createDirectory(atPath: savesDir, withIntermediateDirectories: true)
+        }
+
+        let baseName: String
+        if let profile = profiles[activeModel],
+           let df0 = profile.floppies.first(where: { $0.unit == 0 })?.diskPath,
+           !df0.isEmpty {
+            baseName = URL(fileURLWithPath: df0).deletingPathExtension().lastPathComponent
+        } else {
+            baseName = activeModel.rawValue.replacingOccurrences(of: " ", with: "")
+        }
+
+        let df = DateFormatter()
+        df.dateFormat = "yyyy-MM-dd_HH-mm-ss"
+        let stamp = df.string(from: Date())
+        let filename = "\(baseName)_\(stamp).arf"
+        let fullPath = (savesDir as NSString).appendingPathComponent(filename)
+
+        if amiga_save_arf_path(machine, fullPath) != 0 {
+            rightVC.reloadLibrary()
+            rightVC.expandSavesFolder()
+        }
+        window.makeFirstResponder(metalView)
+    }
+
+    @objc private func openMachineSnapshotDialog() {
+        let panel = NSOpenPanel()
+        panel.directoryURL = URL(fileURLWithPath: AmigaPaths.savesDirectoryPath, isDirectory: true)
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        if panel.runModal() == .OK, let url = panel.url {
+            loadMachineSnapshot(path: url.path)
+        }
+    }
+
+    private func loadMachineSnapshot(path: String) {
+        guard let machine = machine else { return }
+        guard amiga_load_arf_path(machine, path) != 0 else { return }
+
+        let rawModel = amiga_get_model(machine)
+        if let restoredModel = AmigaModelType.allCases.first(where: { $0.modelCode == rawModel }) {
+            activeModel = restoredModel
+        }
+        if let profile = profiles[activeModel] {
+            profile.a500Chip512KB = (amiga_get_a500_chip_ram_512k(machine) != 0)
+            profile.a600Chip2MB = (amiga_get_a600_chip_ram_2mb(machine) != 0)
+            profile.fastRamMB = Int(amiga_get_fast_ram_mb(machine))
+
+            var newFloppies: [FloppyDriveSlot] = []
+            for u in 0..<4 {
+                let enabled = (amiga_get_floppy_enabled(machine, Int32(u)) != 0)
+                let ro = (amiga_get_floppy_write_protect(machine, Int32(u)) != 0)
+                let cPath = amiga_get_floppy_path(machine, Int32(u))
+                let diskPath = (cPath != nil) ? String(cString: cPath!) : ""
+                if u == 0 || enabled || !diskPath.isEmpty {
+                    newFloppies.append(FloppyDriveSlot(
+                        unit: u,
+                        diskPath: diskPath.isEmpty ? nil : diskPath,
+                        readOnly: ro
+                    ))
+                }
+            }
+            profile.floppies = newFloppies
+            rightVC.updateAvailableUnits(profile.floppies.map { $0.unit })
+        }
+
+        leftVC.updateSelected(activeModel)
+        saveConfig()
+        updateWindowTitle()
+        window.makeFirstResponder(metalView)
     }
 
     func sidebarDidSelectModel(_ model: AmigaModelType) {
@@ -853,8 +1048,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTo
     // MARK: - RightDiskBrowserDelegate
 
     func diskBrowserDidSelectDisk(_ path: String, unit: Int, resetMachine: Bool) {
+        if path.lowercased().hasSuffix(".arf") {
+            loadMachineSnapshot(path: path)
+            return
+        }
         guard let profile = profiles[activeModel] else { return }
         mountFloppy(path: path, unit: unit, in: profile, resetMachine: resetMachine)
+    }
+
+    func diskBrowserDidSelectSnapshot(_ path: String) {
+        loadMachineSnapshot(path: path)
     }
 
     func diskBrowserDidSelectDiskSet(_ paths: [String], resetMachine: Bool) {

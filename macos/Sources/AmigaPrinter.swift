@@ -335,7 +335,7 @@ final class AmigaPrinterSpooler {
         textView.layoutManager?.ensureLayout(for: textView.textContainer!)
 
         let op = NSPrintOperation(view: textView, printInfo: printInfo)
-        op.jobTitle = "AmigaEmu — \(sourceLabel)"
+        op.jobTitle = "Ami the Emu — \(sourceLabel)"
         op.showsPrintPanel = true
         op.showsProgressPanel = true
 

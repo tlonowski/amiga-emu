@@ -45,6 +45,74 @@ public:
     size_t drain_parallel_tx(uint8_t* dst, size_t max_len);
     void clear_parallel_tx() { prb_tx_buf_.clear(); }
 
+    struct StateSnapshot {
+        uint8_t pra = 0;
+        uint8_t prb = 0;
+        uint8_t ddra = 0;
+        uint8_t ddrb = 0;
+        uint16_t ta_counter = 0xFFFF;
+        uint16_t ta_latch = 0xFFFF;
+        uint16_t tb_counter = 0xFFFF;
+        uint16_t tb_latch = 0xFFFF;
+        uint32_t tod = 0;
+        uint32_t tod_alarm = 0;
+        uint32_t tod_latch = 0;
+        uint8_t tod_latched = 0;
+        uint8_t tod_running = 1;
+        uint8_t sdr = 0;
+        uint8_t icr_data = 0;
+        uint8_t icr_mask = 0;
+        uint8_t cra = 0;
+        uint8_t crb = 0;
+        uint32_t ack_pending_e_clocks = 0;
+    };
+
+    StateSnapshot capture_state() const {
+        StateSnapshot s;
+        s.pra = pra_;
+        s.prb = prb_;
+        s.ddra = ddra_;
+        s.ddrb = ddrb_;
+        s.ta_counter = ta_counter_;
+        s.ta_latch = ta_latch_;
+        s.tb_counter = tb_counter_;
+        s.tb_latch = tb_latch_;
+        s.tod = tod_;
+        s.tod_alarm = tod_alarm_;
+        s.tod_latch = tod_latch_;
+        s.tod_latched = tod_latched_ ? 1 : 0;
+        s.tod_running = tod_running_ ? 1 : 0;
+        s.sdr = sdr_;
+        s.icr_data = icr_data_;
+        s.icr_mask = icr_mask_;
+        s.cra = cra_;
+        s.crb = crb_;
+        s.ack_pending_e_clocks = ack_pending_e_clocks_;
+        return s;
+    }
+
+    void restore_state(const StateSnapshot& s) {
+        pra_ = s.pra;
+        prb_ = s.prb;
+        ddra_ = s.ddra;
+        ddrb_ = s.ddrb;
+        ta_counter_ = s.ta_counter;
+        ta_latch_ = s.ta_latch;
+        tb_counter_ = s.tb_counter;
+        tb_latch_ = s.tb_latch;
+        tod_ = s.tod;
+        tod_alarm_ = s.tod_alarm;
+        tod_latch_ = s.tod_latch;
+        tod_latched_ = s.tod_latched != 0;
+        tod_running_ = s.tod_running != 0;
+        sdr_ = s.sdr;
+        icr_data_ = s.icr_data;
+        icr_mask_ = s.icr_mask;
+        cra_ = s.cra;
+        crb_ = s.crb;
+        ack_pending_e_clocks_ = s.ack_pending_e_clocks;
+    }
+
 private:
     void raise_icr(uint8_t bits);
 
