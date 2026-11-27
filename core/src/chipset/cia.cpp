@@ -142,7 +142,6 @@ void Cia8520::write(uint8_t reg, uint8_t val) {
             break;
         case 0xC:
             sdr_ = val;
-            raise_icr(0x08u);
             break;
         case 0xD:
             if ((val & 0x80u) != 0) {

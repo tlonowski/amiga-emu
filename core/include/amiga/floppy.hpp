@@ -94,6 +94,12 @@ public:
     /// Reads next 16-bit MFM word from the current track and advances head position.
     /// Sets out_index=true when the track wraps around.
     uint16_t read_mfm_word(bool& out_index);
+    /// Returns the most recently read 16-bit MFM word without advancing head position.
+    uint16_t current_mfm_word() const {
+        if (track_mfm_.empty()) return 0xAAAAu;
+        const size_t n = track_mfm_.size();
+        return track_mfm_[(track_pos_ + n - 1u) % n];
+    }
     /// Returns the CPU cycle duration (at 7.09379 MHz) per MFM byte at the current head position (~114 cycles nominal).
     uint32_t current_byte_cpu_cycles() const { return last_byte_cpu_cycles_; }
     /// Scans the track bit-by-bit (or word-by-word) up to `max_words` for `sync_word` (e.g. $4489)

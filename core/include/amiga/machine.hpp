@@ -79,6 +79,7 @@ private:
     AmigaBus bus_;
     M68k cpu_;
     uint32_t e_clock_rem_ = 0;
+    uint32_t cpu_cycle_rem_ = 0;
     std::deque<uint8_t> key_queue_;
     uint32_t key_cooldown_cycles_ = 0;
     bool joy_fire_ = false;

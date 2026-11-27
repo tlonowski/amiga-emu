@@ -96,6 +96,7 @@ void Amiga500::reset() {
     bus_.reset();
     cpu_.reset();
     e_clock_rem_ = 0;
+    cpu_cycle_rem_ = 0;
     key_queue_.clear();
     key_cooldown_cycles_ = 0;
     joy_fire_ = false;
@@ -156,9 +157,15 @@ uint32_t Amiga500::step_instruction() {
     const uint32_t cpu_cycles = cpu_.step();
     uint32_t cycles = cpu_cycles;
     if (model_ == AmigaModel::A1200) {
-        cycles = std::max<uint32_t>(1u, cpu_cycles / 3u);
+        const uint32_t tot = cpu_cycles + cpu_cycle_rem_;
+        cycles = tot / 2u;
+        cpu_cycle_rem_ = tot % 2u;
+        if (cycles == 0u) cycles = 1u;
     } else if (model_ == AmigaModel::A4000) {
-        cycles = std::max<uint32_t>(1u, cpu_cycles / 4u);
+        const uint32_t tot = cpu_cycles + cpu_cycle_rem_;
+        cycles = tot / 3u;
+        cpu_cycle_rem_ = tot % 3u;
+        if (cycles == 0u) cycles = 1u;
     }
     update_floppies();
 

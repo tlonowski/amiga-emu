@@ -894,7 +894,7 @@ uint32_t M68k::step() {
   }
   const uint32_t bus_wait = bus_.take_wait_cycles();
   if (bus_wait > 0u) {
-    const uint32_t mult = is_32bit() ? 4u : (is_020() ? 2u : 1u);
+    const uint32_t mult = is_32bit() ? 3u : (is_020() ? 2u : 1u);
     cycles += bus_wait * mult;
   }
   total_cycles_ += cycles;

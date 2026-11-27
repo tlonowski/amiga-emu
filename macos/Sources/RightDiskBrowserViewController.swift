@@ -392,16 +392,56 @@ final class RightDiskBrowserViewController: NSViewController, NSOutlineViewDataS
         cell.addSubview(icon)
         cell.addSubview(title)
 
-        NSLayoutConstraint.activate([
-            icon.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 4),
-            icon.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-            icon.widthAnchor.constraint(equalToConstant: 15),
-            icon.heightAnchor.constraint(equalToConstant: 15),
+        if node.isSnapshot, let snapPath = node.path {
+            let delBtn = NSButton(title: "", target: self, action: #selector(onDeleteSnapshotClicked(_:)))
+            delBtn.isBordered = false
+            delBtn.bezelStyle = .inline
+            delBtn.image = NSImage(systemSymbolName: "minus.circle.fill", accessibilityDescription: L10n.t("Usuń zapis", "Delete save"))
+            delBtn.imagePosition = .imageOnly
+            delBtn.contentTintColor = MonokaiTheme.pink.withAlphaComponent(0.85)
+            delBtn.toolTip = L10n.t("Usuń ten zapis (.arf)", "Delete this save (.arf)")
+            delBtn.identifier = NSUserInterfaceItemIdentifier(snapPath)
+            delBtn.translatesAutoresizingMaskIntoConstraints = false
+            cell.addSubview(delBtn)
 
-            title.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 6),
-            title.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -6),
-            title.centerYAnchor.constraint(equalTo: cell.centerYAnchor)
-        ])
+            NSLayoutConstraint.activate([
+                icon.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 4),
+                icon.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+                icon.widthAnchor.constraint(equalToConstant: 15),
+                icon.heightAnchor.constraint(equalToConstant: 15),
+
+                title.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 6),
+                title.trailingAnchor.constraint(equalTo: delBtn.leadingAnchor, constant: -4),
+                title.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+
+                delBtn.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -4),
+                delBtn.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+                delBtn.widthAnchor.constraint(equalToConstant: 16),
+                delBtn.heightAnchor.constraint(equalToConstant: 16)
+            ])
+        } else {
+            NSLayoutConstraint.activate([
+                icon.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 4),
+                icon.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+                icon.widthAnchor.constraint(equalToConstant: 15),
+                icon.heightAnchor.constraint(equalToConstant: 15),
+
+                title.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 6),
+                title.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -6),
+                title.centerYAnchor.constraint(equalTo: cell.centerYAnchor)
+            ])
+        }
         return cell
+    }
+
+    @objc private func onDeleteSnapshotClicked(_ sender: NSButton) {
+        guard let path = sender.identifier?.rawValue, !path.isEmpty else { return }
+        let url = URL(fileURLWithPath: path)
+        let fm = FileManager.default
+        if (try? fm.trashItem(at: url, resultingItemURL: nil)) == nil {
+            try? fm.removeItem(at: url)
+        }
+        reloadLibrary()
+        expandSavesFolder()
     }
 }

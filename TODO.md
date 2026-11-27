@@ -32,7 +32,7 @@
 - [x] **Portowanie joysticków z JoyPort do USB / Bluetooth:** obsługa fizycznych kontrolerów USB / Bluetooth (`GCController` / `IOHIDManager`) mapowanych na porty joysticka Amigi.
 
 ## Nośniki i zabezpieczenia dyskietek
-- [ ] **Pełna obsługa zabezpieczeń zmiennej gęstości bitowej w obrazach `.scp` (*SuperCard Pro* / *Rob Northen Copylock*):** dokładne odwzorowanie pomiaru prędkości kątowej sektorów (`$8911` / `$8912` / `$8914`) przez rejestr `DSKBYTR` (`$DFF01A`) na drugiej dyskietce *Cannon Fodder 1* (`Cannon Fodder 1 B.scp`).
+- [x] **Pełna obsługa zabezpieczeń zmiennej gęstości bitowej w obrazach `.scp` (*SuperCard Pro* / *Rob Northen Copylock*):** dokładne odwzorowanie pomiaru prędkości kątowej sektorów (`$8911` / `$8912` / `$8914`) przez rejestr `DSKBYTR` (`$DFF01A`) na drugiej dyskietce *Cannon Fodder 1* (`Cannon Fodder 1 B.scp`).
 
 ## Kartridże rozszerzeń i narzędzia (Action Replay / Freezer)
 - [x] **Zrzuty stanu maszyny i pamięci (`.arf` — *Action Replay Freeze*) w katalogu `Saves`:** zapisywanie pełnego stanu procesora, pamięci RAM (Chip/Slow/Fast), układów CIA i Custom (Agnus/Denise/Lisa/Paula) oraz zamontowanych dyskietek `DF0:`–`DF3:` do pliku `.arf` (przycisk *Freeze* z ikoną śnieżynki / `Ctrl+S`), a także błyskawiczne wznawianie maszyny wraz z podłączeniem dyskietek po dwukliku na plik `.arf` w prawym panelu.

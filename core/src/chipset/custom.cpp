@@ -1546,74 +1546,7 @@ FloppyDrive *CustomChips::active_floppy() const {
 }
 
 void CustomChips::run_disk_line(bool &out_disk_index) {
-  FloppyDrive *floppy = active_floppy();
-  if (!floppy || !floppy->motor_on()) {
-    return;
-  }
-
-  const bool dma_enabled =
-      (dmacon_ & 0x0210u) == 0x0210u; // DMAEN (bit 9) + DSKEN (bit 4)
-  if (!dsk_dma_active_ || !dma_enabled) {
-    // When DSKLEN DMAEN is on with length 0 and WORDSYNC is enabled, Paula still
-    // scans the incoming MFM stream for DSKSYNC and asserts DSKSYN + WORDEQUAL.
-    const bool wordsync = (adkcon_ & 0x0400u) != 0;
-    if (dsk_dma_on_ && dma_enabled && wordsync && !dsk_synced_) {
-      if (floppy->sync_to_word(dsksync_, 128u, out_disk_index)) {
-        dsk_synced_ = true;
-        dsk_last_word_ = dsksync_;
-        dsk_wordequal_hold_ = 64u;
-        dskbytr_ = static_cast<uint16_t>(0x9000u | (dsk_dma_on_ ? 0x4000u : 0u) | (dsksync_ & 0xFFu));
-        intreq_ |= (1u << 12); // DSKSYN
-      }
-      return;
-    }
-    // Otherwise rotate the disk slowly when DMA transfers are idle
-    bool idx = false;
-    dsk_last_word_ = floppy->read_mfm_word(idx);
-    if (idx)
-      out_disk_index = true;
-    return;
-  }
-
-  const bool wordsync = (adkcon_ & 0x0400u) != 0;
-  if (wordsync && !dsk_synced_) {
-    // Scan up to 128 words per line to catch the sync marker cleanly
-    if (floppy->sync_to_word(dsksync_, 128u, out_disk_index)) {
-      dsk_synced_ = true;
-      dsk_last_word_ = dsksync_;
-      dsk_wordequal_hold_ = 64u;
-      dskbytr_ = static_cast<uint16_t>(0x9000u | (dsk_dma_on_ ? 0x4000u : 0u) | (dsksync_ & 0xFFu));
-      intreq_ |= (1u << 12); // DSKSYN
-    }
-    if (!dsk_synced_)
-      return;
-  }
-
-  // Transfer up to 4 MFM words per scanline
-  for (int i = 0; i < 4 && dsklen_ > 0; ++i) {
-    if (dsk_write_) {
-      const uint16_t w = read_chip16(dskpt_);
-      floppy->write_mfm_word(w);
-    } else {
-      bool idx = false;
-      const uint16_t w = floppy->read_mfm_word(idx);
-      if (idx)
-        out_disk_index = true;
-      write_chip16(dskpt_, w);
-    }
-    dskpt_ += 2u;
-    --dsklen_;
-    if (dsklen_ == 0) {
-      if (dsk_write_) {
-        floppy->finish_write_track();
-      }
-      dsk_dma_active_ = false;
-      dsk_write_ = false;
-      dsk_synced_ = false;
-      intreq_ |= (1u << 1); // DSKBLK
-      break;
-    }
-  }
+  (void)out_disk_index;
 }
 
 void CustomChips::tick_audio(uint32_t cpu_cycles) {
@@ -1813,47 +1746,82 @@ bool CustomChips::tick_cpu_cycles(uint32_t cycles, bool cia_a_irq,
     // 1 MFM disk byte arrives every ~16 us (~113.5 CPU cycles nominal, or exact SCP flux cell rate)
     dsk_byte_cycle_acc_ += cycles;
     uint32_t byte_period = std::max<uint32_t>(80u, floppy->current_byte_cpu_cycles());
+    const bool dma_enabled = (dmacon_ & 0x0210u) == 0x0210u; // DMAEN + DSKEN
+    const bool wordsync = (adkcon_ & 0x0400u) != 0;
     while (dsk_byte_cycle_acc_ >= byte_period) {
       dsk_byte_cycle_acc_ -= byte_period;
       if (dsk_wordequal_hold_ > 0u) {
         --dsk_wordequal_hold_;
       }
-      if (!dsk_dma_active_) {
-        if (dsk_byte_phase_ == 0u) {
-          const bool dma_en = (dmacon_ & 0x0210u) == 0x0210u && dsk_dma_on_;
-          const bool wordsync = (adkcon_ & 0x0400u) != 0;
-          bool idx = false;
-          if (dma_en && wordsync && !dsk_synced_) {
+      if (dsk_byte_phase_ == 0u) {
+        bool idx = false;
+        if (dsk_dma_active_ && dma_enabled && dsk_write_) {
+          if (dsklen_ > 0) {
+            const uint16_t w = read_chip16(dskpt_);
+            floppy->write_mfm_word(w);
+            dsk_last_word_ = w;
+            dskpt_ += 2u;
+            --dsklen_;
+            if (dsklen_ == 0) {
+              floppy->finish_write_track();
+              dsk_dma_active_ = false;
+              dsk_write_ = false;
+              dsk_synced_ = false;
+              intreq_ |= (1u << 1); // DSKBLK
+            }
+          }
+        } else {
+          if (dsk_dma_active_ && dma_enabled && wordsync && !dsk_synced_) {
             if (floppy->sync_to_word(dsksync_, 1u, idx)) {
               dsk_synced_ = true;
               dsk_last_word_ = dsksync_;
-              dsk_wordequal_hold_ = 4u;
-              intreq_ |= (1u << 12);
+              dsk_wordequal_hold_ = 2u;
+              intreq_ |= (1u << 12); // DSKSYN
             } else {
-              dsk_last_word_ = 0xAAAAu;
+              dsk_last_word_ = floppy->current_mfm_word();
             }
-          } else {
+          } else if (dsk_dma_active_ && dma_enabled) {
             dsk_last_word_ = floppy->read_mfm_word(idx);
             if (dsk_last_word_ == dsksync_) {
-              dsk_wordequal_hold_ = 4u;
-              intreq_ |= (1u << 12);
+              dsk_wordequal_hold_ = 2u;
+              intreq_ |= (1u << 12); // DSKSYN
+            }
+            if (dsklen_ > 0) {
+              write_chip16(dskpt_, dsk_last_word_);
+              dskpt_ += 2u;
+              --dsklen_;
+              if (dsklen_ == 0) {
+                dsk_dma_active_ = false;
+                dsk_write_ = false;
+                dsk_synced_ = false;
+                intreq_ |= (1u << 1); // DSKBLK
+              }
+            }
+          } else {
+            if (floppy->sync_to_word(dsksync_, 1u, idx)) {
+              dsk_last_word_ = dsksync_;
+              dsk_wordequal_hold_ = 2u;
+              intreq_ |= (1u << 12); // DSKSYN
+            } else {
+              dsk_last_word_ = floppy->current_mfm_word();
             }
           }
-          byte_period = std::max<uint32_t>(80u, floppy->current_byte_cpu_cycles());
-          if (idx) out_disk_index = true;
         }
-        const uint8_t b = (dsk_byte_phase_ == 0u)
-                              ? static_cast<uint8_t>(dsk_last_word_ >> 8)
-                              : static_cast<uint8_t>(dsk_last_word_ & 0xFFu);
-        dsk_byte_phase_ ^= 1u;
-        const bool dma_en = (dmacon_ & 0x0210u) == 0x0210u && dsk_dma_on_;
-        const uint16_t flags =
-            0x8000u |
-            (dma_en ? 0x4000u : 0u) |
-            (dsk_write_ ? 0x2000u : 0u) |
-            ((dsk_last_word_ == dsksync_ || dsk_wordequal_hold_ > 0u) ? 0x1000u : 0u);
-        dskbytr_ = static_cast<uint16_t>(flags | b);
+        byte_period = std::max<uint32_t>(80u, floppy->current_byte_cpu_cycles());
+        if (idx) out_disk_index = true;
       }
+      const uint8_t b = (dsk_byte_phase_ == 0u)
+                            ? static_cast<uint8_t>(dsk_last_word_ >> 8)
+                            : static_cast<uint8_t>(dsk_last_word_ & 0xFFu);
+      const bool wordequal_now = (dsk_byte_phase_ == 1u) && (dsk_wordequal_hold_ > 0u);
+      dsk_byte_phase_ ^= 1u;
+      const bool dma_on_bit = dma_enabled && dsk_dma_on_;
+      const uint16_t flags =
+          0x8000u |
+          (dma_on_bit ? 0x4000u : 0u) |
+          (dsk_write_ ? 0x2000u : 0u) |
+          (wordequal_now ? 0x1000u : 0u);
+      dskbytr_ = static_cast<uint16_t>(flags | b);
     }
   }
 
@@ -1968,7 +1936,9 @@ uint32_t CustomChips::cpu_chip_wait_cycles(bool is_32bit_access) const {
                     }
                     const uint32_t slots_per_8 = std::min<uint32_t>(
                         8u, (static_cast<uint32_t>(bpu) * res_mult + fmode_div - 1u) / fmode_div);
-                    if ((cck & 7u) < slots_per_8) {
+                    // Up to 4 bitplane DMA fetches per 8 CCKs fit entirely in even DMA slots (zero CPU contention).
+                    // Only fetches beyond 4 per 8 CCKs (5-6 bpl lores, 3-4 bpl hires, etc.) steal odd CPU slots.
+                    if (slots_per_8 > 4u && (cck & 7u) < (slots_per_8 - 4u)) {
                         wait += (slots_per_8 >= 8u) ? 4u : 2u;
                     }
                 }

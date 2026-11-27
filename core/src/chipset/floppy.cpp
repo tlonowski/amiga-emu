@@ -474,6 +474,11 @@ bool FloppyDrive::sync_to_word(uint16_t sync_word, size_t max_words, bool& out_i
     for (size_t step = 0; step < max_words; ++step) {
         const size_t cur_w = track_pos_;
         const uint16_t w = track_mfm_[cur_w];
+        if (cur_w < track_byte_cycles_.size()) {
+            last_byte_cpu_cycles_ = track_byte_cycles_[cur_w];
+        } else {
+            last_byte_cpu_cycles_ = 114u;
+        }
         track_pos_ = (cur_w + 1u) % n;
         if (track_pos_ == 0) out_index = true;
 
@@ -499,7 +504,7 @@ bool FloppyDrive::sync_to_word(uint16_t sync_word, size_t max_words, bool& out_i
                         scp_tracks_[linear_track] = track_mfm_;
                         scp_byte_cycles_[linear_track] = track_byte_cycles_;
                     }
-                    track_pos_ = (cur_w + 1u) % n;
+                    track_pos_ = cur_w;
                 }
                 if (track_pos_ < track_byte_cycles_.size()) {
                     last_byte_cpu_cycles_ = track_byte_cycles_[track_pos_];
