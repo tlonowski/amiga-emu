@@ -325,6 +325,20 @@ void CustomChips::write16(uint16_t reg_offset, uint16_t val) {
     return;
   }
 
+  // Direct sprite control writes SPR0POS..SPR7DATB ($140..$17E)
+  if (reg >= 0x140 && reg <= 0x17E) {
+    const unsigned idx = (reg - 0x140u) >> 3;
+    const unsigned sub = reg & 0x06u;
+    auto &sp = sprites_[idx];
+    if (sub == 0x02u) { // SPRxCTL: writing disarms sprite
+      if (val == 0u) {
+        sp.done = true;
+        sp.armed = true;
+      }
+    }
+    return;
+  }
+
   // Bitplane pointers BPL1PTH..BPL8PTL ($0E0..$0FE)
   if (reg >= 0x0E0 && reg <= 0x0FE) {
     const unsigned plane = (reg - 0x0E0u) >> 2;
@@ -1383,6 +1397,8 @@ void CustomChips::render_scanline(uint16_t line) {
       return v;
     };
 
+    const bool sscan2 = aga_enabled_ && ((fmode_ & 0x8000u) != 0u);
+
     auto fetch_ctrl = [&](SpriteState &sp) {
       const uint16_t pos = read_chip16(sp.pt);
       const uint16_t ctl = read_chip16(sp.pt + (spr_stride / 2u));
@@ -1401,6 +1417,19 @@ void CustomChips::render_scanline(uint16_t line) {
       sp.attached = (ctl & 0x80u) != 0;
       sp.armed = true;
       sp.done = false;
+
+      if (sp.vstart >= PAL_LINES || sp.vstop <= sp.vstart) {
+        sp.done = true;
+        return;
+      }
+      if (line > sp.vstart) {
+        const uint16_t skipped = static_cast<uint16_t>(
+            std::min<uint16_t>(line, sp.vstop) - sp.vstart);
+        const uint32_t data_rows =
+            sscan2 ? static_cast<uint32_t>((skipped + 1u) / 2u)
+                   : static_cast<uint32_t>(skipped);
+        sp.pt += data_rows * spr_stride;
+      }
     };
 
     for (unsigned s = 0; s < 8; ++s) {
@@ -1417,7 +1446,6 @@ void CustomChips::render_scanline(uint16_t line) {
       if (!sp.done && line >= sp.vstart && line < sp.vstop) {
         spr_a[s] = read_spr_chan(sp.pt);
         spr_b[s] = read_spr_chan(sp.pt + (spr_stride / 2u));
-        const bool sscan2 = aga_enabled_ && ((fmode_ & 0x8000u) != 0u);
         if (!sscan2 || ((line & 1u) != (sp.vstart & 1u))) {
           sp.pt += spr_stride;
         }
